@@ -8,7 +8,7 @@ import '../models/node_model.dart';
 
 class ApiService {
   // Sin prefijo /api para coincidir con tu servidor NestJS
-  static const String baseUrl = 'http://localhost:3000';
+  static const String nestBaseUrl = 'http://localhost:3000';
   static String? _token;
   static String? _currentUserId;
 
@@ -19,6 +19,47 @@ class ApiService {
     _token = prefs.getString('jwt_token');
     _currentUserId = prefs.getString('user_id');
     return _token != null && _token!.isNotEmpty;
+  }
+
+  /// Obtiene la URL de Spotify a través de NestJS.
+  static Future<String?> getSpotifyLoginUrl() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$nestBaseUrl/auth/spotify/login-url'),
+        headers: _headers,
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['authUrl'] as String?;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Vincula Spotify en NestJS para asociarlo al usuario autenticado.
+  static Future<bool> linkSpotifyAccount(String spotifyCode) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$nestBaseUrl/auth/spotify'),
+        headers: _headers,
+        body: jsonEncode({
+          'code': spotifyCode,
+        }),
+      );
+      if (kDebugMode &&
+          response.statusCode != 200 &&
+          response.statusCode != 201) {
+        debugPrint(
+          'Spotify link error [${response.statusCode}]: ${response.body}',
+        );
+      }
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      return false;
+    }
   }
 
   static Future<void> _saveSession(String token, String userId) async {
@@ -45,7 +86,7 @@ class ApiService {
   static Future<AuthResponse?> login(String email, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/login'),
+        Uri.parse('$nestBaseUrl/auth/login'),
         headers: _headers,
         body: jsonEncode({'email': email, 'password': password}),
       );
@@ -86,7 +127,7 @@ class ApiService {
               ((random.nextDouble() * 180.0) - 90.0).toStringAsFixed(6));
 
       final response = await http.post(
-        Uri.parse('$baseUrl/auth/register'),
+        Uri.parse('$nestBaseUrl/auth/register'),
         headers: _headers,
         body: jsonEncode({
           'email': email,
@@ -118,7 +159,7 @@ class ApiService {
   static Future<List<NodeModel>> getNodes() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/nodes'),
+        Uri.parse('$nestBaseUrl/nodes'),
         headers: _headers,
       );
 
@@ -145,7 +186,7 @@ class ApiService {
   }) async {
     try {
       final response = await http.patch(
-        Uri.parse('$baseUrl/nodes/location'),
+        Uri.parse('$nestBaseUrl/nodes/location'),
         headers: _headers,
         body: jsonEncode({
           'posX': longitude,

@@ -1,0 +1,10 @@
+<!doctype html>
+<title>Autenticando con Spotify...</title>
+<script>
+  window.onload = function () {
+    if (window.opener) {
+      window.opener.postMessage(window.location.href, "*");
+      window.close();
+    }
+  };
+</script>

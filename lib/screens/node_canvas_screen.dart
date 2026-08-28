@@ -34,6 +34,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   bool _isPendingSync = false;
 
   Timer? _syncTimer;
+  Timer? _canvasRefreshTimer;
 
   late AnimationController _fadeInController;
   late Animation<double> _fadeInAnimation;
@@ -74,10 +75,15 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _syncPositionToBackend();
     });
+
+    _canvasRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _fetchNodesFromBackend();
+    });
   }
 
   @override
   void dispose() {
+    _canvasRefreshTimer?.cancel();
     _syncTimer?.cancel();
     _fadeInController.dispose();
     _clearAnimations();
@@ -108,6 +114,34 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     final canvasSize = _canvasSize;
     final rawNodes = await ApiService.getNodes();
 
+    if (canvasNodes.isNotEmpty) {
+      final nodesById = {
+        for (final node in rawNodes) node.id: node,
+      };
+      final previousNodes = List<NodeModel>.from(canvasNodes);
+      late final List<NodeModel> updatedNodes;
+
+      if (!mounted) return;
+      setState(() {
+        updatedNodes = canvasNodes.map((node) {
+          final refreshedNode = nodesById[node.id];
+          if (refreshedNode == null) return node;
+
+          return node.copyWith(
+            status: refreshedNode.status,
+            bpm: refreshedNode.bpm,
+            bpmEstimated: refreshedNode.bpmEstimated,
+            isPlaying: refreshedNode.isPlaying,
+            songTitle: refreshedNode.songTitle,
+            artist: refreshedNode.artist,
+          );
+        }).toList();
+        canvasNodes = updatedNodes;
+      });
+      _updateAnimationsForRefresh(previousNodes, updatedNodes);
+      return;
+    }
+
     final convertedNodes = rawNodes.map((node) {
       final pixelPos = CoordinateService.geoToPixel(
         longitude: node.posX,
@@ -123,6 +157,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
       screenSize: canvasSize,
     );
 
+    if (!mounted) return;
     setState(() {
       canvasNodes = visuallySeparatedNodes;
     });
@@ -137,33 +172,77 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     _clearAnimations();
 
     for (final node in canvasNodes) {
-      if (node.status == 'ACTIVE' && node.bpm > 0) {
-        final beatDurationMs = (60.0 / node.bpm) * 1000;
+      if (_shouldAnimate(node)) _createAnimation(node);
+    }
+  }
 
-        final controller = AnimationController(
-          vsync: this,
-          duration: Duration(milliseconds: beatDurationMs.round()),
-        )..repeat();
+  bool _shouldAnimate(NodeModel node) {
+    return node.status == 'ACTIVE' && node.isPlaying;
+  }
 
-        final animation = TweenSequence<double>([
-          TweenSequenceItem(
-            tween: Tween<double>(begin: 1.0, end: 1.30).chain(
-              CurveTween(curve: const Cubic(0.05, 0.9, 0.1, 1.0)),
-            ),
-            weight: 20,
-          ),
-          TweenSequenceItem(
-            tween: Tween<double>(begin: 1.30, end: 1.0).chain(
-              CurveTween(curve: Curves.easeOutCubic),
-            ),
-            weight: 80,
-          ),
-        ]).animate(controller);
+  int _animationBpm(NodeModel node) {
+    return node.bpm > 0 ? node.bpm : 100;
+  }
 
-        _bpmControllers[node.id] = controller;
-        _squashAnimations[node.id] = animation;
+  void _createAnimation(NodeModel node) {
+    final beatDurationMs = (60.0 / _animationBpm(node)) * 1000;
+    final controller = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: beatDurationMs.round()),
+    )..repeat();
+
+    final animation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.0, end: 1.30).chain(
+          CurveTween(curve: const Cubic(0.05, 0.9, 0.1, 1.0)),
+        ),
+        weight: 20,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.30, end: 1.0).chain(
+          CurveTween(curve: Curves.easeOutCubic),
+        ),
+        weight: 80,
+      ),
+    ]).animate(controller);
+
+    _bpmControllers[node.id] = controller;
+    _squashAnimations[node.id] = animation;
+  }
+
+  void _updateAnimationsForRefresh(
+    List<NodeModel> previousNodes,
+    List<NodeModel> updatedNodes,
+  ) {
+    final previousById = {
+      for (final node in previousNodes) node.id: node,
+    };
+
+    for (final node in updatedNodes) {
+      final previousNode = previousById[node.id];
+      final animationShouldExist = _shouldAnimate(node);
+      final animationExists = _bpmControllers.containsKey(node.id);
+      final bpmChanged = previousNode == null ||
+          _animationBpm(previousNode) != _animationBpm(node) ||
+          _shouldAnimate(previousNode) != animationShouldExist;
+
+      if (!animationShouldExist) {
+        _disposeAnimation(node.id);
+      } else if (!animationExists || bpmChanged) {
+        _disposeAnimation(node.id);
+        _createAnimation(node);
       }
     }
+
+    final currentIds = updatedNodes.map((node) => node.id).toSet();
+    for (final nodeId in _bpmControllers.keys.toList()) {
+      if (!currentIds.contains(nodeId)) _disposeAnimation(nodeId);
+    }
+  }
+
+  void _disposeAnimation(String nodeId) {
+    _bpmControllers.remove(nodeId)?.dispose();
+    _squashAnimations.remove(nodeId);
   }
 
   void _syncPositionToBackend() {
@@ -381,6 +460,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
               isVisible: selectedNodeId != null,
               localNodeId: localNodeId,
               pulseAnimation: selectedAnimation,
+              onSpotifyConnected: _fetchNodesFromBackend,
             ),
         ],
       ),
