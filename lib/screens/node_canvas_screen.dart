@@ -9,6 +9,7 @@ import '../services/collision_service.dart';
 import '../services/coordinate_service.dart';
 import '../widgets/node_painter.dart';
 import '../widgets/notification_card.dart';
+import 'auth_screen.dart';
 
 class NodeCanvasScreen extends StatefulWidget {
   const NodeCanvasScreen({super.key});
@@ -19,14 +20,19 @@ class NodeCanvasScreen extends StatefulWidget {
 
 class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     with TickerProviderStateMixin {
-  final String localNodeId = 'local_user_1';
-  late List<NodeModel> mockNodes;
+  late final String localNodeId;
   final GlobalKey _canvasKey = GlobalKey();
+
+  List<NodeModel> canvasNodes = [];
+  bool isLoadingNodes = true;
 
   String? selectedNodeId;
   NodeModel? _lastSelectedNode;
+
   bool isDraggingLocal = false;
-  bool _hasPositionChanged = false;
+  bool _hasMovedDuringCurrentDrag = false;
+  bool _isPendingSync = false;
+
   Timer? _syncTimer;
 
   final Map<String, AnimationController> _bpmControllers = {};
@@ -35,45 +41,85 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   @override
   void initState() {
     super.initState();
+    localNodeId = ApiService.currentUserId ?? '';
 
-    mockNodes = [
-      NodeModel(
-        id: localNodeId,
-        label: 'You (Local Node)',
-        posX: 180.0,
-        posY: 320.0,
-        status: 'ACTIVE',
-        bpm: 71,
-        songTitle: 'Flowers in My Hair',
-        artist: 'Wes Reeve',
-      ),
-      NodeModel(
-        id: 'remote_node_2',
-        label: 'Node Alpha',
-        posX:
-            180.0, // Same initial position as local node to test auto-separation
-        posY: 320.0,
-        status: 'ACTIVE',
-        bpm: 120,
-        songTitle: 'Midnight City',
-        artist: 'M83',
-      ),
-      NodeModel(
-        id: 'remote_node_3',
-        label: 'Node Beta',
-        posX: 280.0,
-        posY: 480.0,
-        status: 'IDLE',
-        bpm: 90,
-        songTitle: 'Starboy',
-        artist: 'The Weeknd',
-      ),
-    ];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _fetchNodesFromBackend();
+    });
 
-    // Setup rhythmic animations for active nodes
-    for (final node in mockNodes) {
+    _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _syncPositionToBackend();
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncTimer?.cancel();
+    _clearAnimations();
+    super.dispose();
+  }
+
+  // --- Helper Methods ---
+
+  Size get _canvasSize {
+    final renderBox =
+        _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    return renderBox?.size ?? MediaQuery.of(context).size;
+  }
+
+  Offset? _globalToLocalOffset(Offset globalPosition) {
+    final renderBox =
+        _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    return renderBox?.globalToLocal(globalPosition);
+  }
+
+  void _clearAnimations() {
+    for (final controller in _bpmControllers.values) {
+      controller.dispose();
+    }
+    _bpmControllers.clear();
+    _squashAnimations.clear();
+  }
+
+  // --- API & State Sync ---
+
+  Future<void> _fetchNodesFromBackend() async {
+    final canvasSize = _canvasSize;
+    final rawNodes = await ApiService.getNodes();
+
+    // 1. Map real Earth coordinates (posX=lng, posY=lat) to screen pixels
+    final convertedNodes = rawNodes.map((node) {
+      final pixelPos = CoordinateService.geoToPixel(
+        longitude: node.posX,
+        latitude: node.posY,
+        screenSize: canvasSize,
+      );
+      return node.copyWith(posX: pixelPos.dx, posY: pixelPos.dy);
+    }).toList();
+
+    // 2. Resolve visual overlaps for local render (leaves DB coordinates untouched)
+    final visuallySeparatedNodes = CollisionService.resolveVisualOverlaps(
+      nodes: convertedNodes,
+      localNodeId: localNodeId,
+      screenSize: canvasSize,
+    );
+
+    setState(() {
+      canvasNodes = visuallySeparatedNodes;
+      isLoadingNodes = false;
+    });
+
+    if (canvasNodes.isNotEmpty) {
+      _setupAnimations();
+    }
+  }
+
+  void _setupAnimations() {
+    _clearAnimations();
+
+    for (final node in canvasNodes) {
       if (node.status == 'ACTIVE' && node.bpm > 0) {
-        final double beatDurationMs = (60.0 / node.bpm) * 1000;
+        final beatDurationMs = (60.0 / node.bpm) * 1000;
 
         final controller = AnimationController(
           vsync: this,
@@ -99,122 +145,71 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
         _squashAnimations[node.id] = animation;
       }
     }
-
-    // Run auto-separation after initial build layout pass
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initialAutoSeparation();
-    });
-
-    // Periodic timer (every 5 seconds) to sync local node relative position
-    _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      _syncPositionToBackend();
-    });
   }
 
-  @override
-  void dispose() {
-    _syncTimer?.cancel();
-    for (final controller in _bpmControllers.values) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  void _initialAutoSeparation() {
-    bool shiftedAnyNode = false;
-
-    for (int i = 0; i < mockNodes.length; i++) {
-      final currentNode = mockNodes[i];
-      final currentPos = Offset(currentNode.posX, currentNode.posY);
-
-      final resolvedPos = CollisionService.resolveCollisions(
-        targetPos: currentPos,
-        nodes: mockNodes,
-        localNodeId: currentNode.id,
-      );
-
-      if (resolvedPos != currentPos) {
-        mockNodes[i] = currentNode.copyWith(
-          posX: resolvedPos.dx,
-          posY: resolvedPos.dy,
-        );
-        shiftedAnyNode = true;
-      }
-    }
-
-    if (shiftedAnyNode) {
-      setState(() {
-        _hasPositionChanged = true;
-      });
-      // Force immediate sync if positions had to be corrected on load
-      _syncPositionToBackend();
-    }
-  }
-
-  /// Sends relative coordinates (0.0 - 1.0) to NestJS API if modified
   void _syncPositionToBackend() {
-    if (!_hasPositionChanged) return;
+    if (!_isPendingSync || localNodeId.isEmpty) return;
 
-    final RenderBox? renderBox =
-        _canvasKey.currentContext?.findRenderObject() as RenderBox?;
-    if (renderBox == null) return;
+    final localNodeIndex = canvasNodes.indexWhere((n) => n.id == localNodeId);
+    if (localNodeIndex == -1) return;
 
-    final Size canvasSize = renderBox.size;
-    final localNode = mockNodes.firstWhere((n) => n.id == localNodeId);
-
-    final relativePos = CoordinateService.toRelative(
-      absolutePos: Offset(localNode.posX, localNode.posY),
-      screenSize: canvasSize,
+    final localNode = canvasNodes[localNodeIndex];
+    final geo = CoordinateService.pixelToGeo(
+      pixelPos: Offset(localNode.posX, localNode.posY),
+      screenSize: _canvasSize,
     );
 
     ApiService.updateNodePosition(
-      nodeId: localNodeId,
-      relativeX: relativePos.dx,
-      relativeY: relativePos.dy,
+      longitude: geo['longitude']!,
+      latitude: geo['latitude']!,
     );
 
-    _hasPositionChanged = false;
+    _isPendingSync = false;
   }
 
+  // --- Interaction & Physics Handlers ---
+
   void _updateLocalPosition(Offset globalPosition) {
-    final RenderBox? renderBox =
-        _canvasKey.currentContext?.findRenderObject() as RenderBox?;
-    if (renderBox == null) return;
+    final localPosition = _globalToLocalOffset(globalPosition);
+    if (localPosition == null) return;
 
-    final Offset localPosition = renderBox.globalToLocal(globalPosition);
-
-    final Offset finalPosition = CollisionService.resolveCollisions(
+    final result = CollisionService.resolveCollisions(
       targetPos: localPosition,
-      nodes: mockNodes,
+      nodes: canvasNodes,
       localNodeId: localNodeId,
+      screenSize: _canvasSize,
     );
 
     setState(() {
-      final index = mockNodes.indexWhere((n) => n.id == localNodeId);
+      final index = canvasNodes.indexWhere((n) => n.id == localNodeId);
       if (index != -1) {
-        mockNodes[index] = mockNodes[index].copyWith(
-          posX: finalPosition.dx,
-          posY: finalPosition.dy,
+        canvasNodes[index] = canvasNodes[index].copyWith(
+          posX: result.position.dx,
+          posY: result.position.dy,
+          scaleX: result.scaleX,
+          scaleY: result.scaleY,
+          rotationAngle: result.rotationAngle,
         );
-        _hasPositionChanged = true; // Mark dirty for 5-second timer
+        _hasMovedDuringCurrentDrag = true;
       }
     });
   }
 
   void _onPanStart(DragStartDetails details) {
-    final RenderBox? renderBox =
-        _canvasKey.currentContext?.findRenderObject() as RenderBox?;
-    if (renderBox == null) return;
+    final tapPos = _globalToLocalOffset(details.globalPosition);
+    if (tapPos == null) return;
 
-    final Offset tapPos = renderBox.globalToLocal(details.globalPosition);
-    final localNode = mockNodes.firstWhere((n) => n.id == localNodeId);
+    final localNodeIndex = canvasNodes.indexWhere((n) => n.id == localNodeId);
+    if (localNodeIndex == -1) return;
 
-    final double dx = tapPos.dx - localNode.posX;
-    final double dy = tapPos.dy - localNode.posY;
-    final double distance = math.sqrt(dx * dx + dy * dy);
+    final localNode = canvasNodes[localNodeIndex];
+    final dx = tapPos.dx - localNode.posX;
+    final dy = tapPos.dy - localNode.posY;
+    final distance = math.sqrt(dx * dx + dy * dy);
 
     if (distance <= CanvasConstants.nodeRadius + 10) {
       isDraggingLocal = true;
+      _hasMovedDuringCurrentDrag = false;
       _updateLocalPosition(details.globalPosition);
     } else {
       isDraggingLocal = false;
@@ -228,21 +223,36 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   }
 
   void _onPanEnd(DragEndDetails details) {
+    if (isDraggingLocal && _hasMovedDuringCurrentDrag) {
+      _isPendingSync = true;
+    }
+
+    // Reset elliptical jelly deformation back to standard round shape when released
+    final index = canvasNodes.indexWhere((n) => n.id == localNodeId);
+    if (index != -1) {
+      setState(() {
+        canvasNodes[index] = canvasNodes[index].copyWith(
+          scaleX: 1.0,
+          scaleY: 1.0,
+          rotationAngle: 0.0,
+        );
+      });
+    }
+
     isDraggingLocal = false;
+    _hasMovedDuringCurrentDrag = false;
   }
 
   void _onTapCanvas(TapDownDetails details) {
-    final RenderBox? renderBox =
-        _canvasKey.currentContext?.findRenderObject() as RenderBox?;
-    if (renderBox == null) return;
+    final tapPos = _globalToLocalOffset(details.globalPosition);
+    if (tapPos == null) return;
 
-    final Offset tapPos = renderBox.globalToLocal(details.globalPosition);
     String? tappedNodeId;
 
-    for (final node in mockNodes) {
-      final double dx = tapPos.dx - node.posX;
-      final double dy = tapPos.dy - node.posY;
-      final double distance = math.sqrt(dx * dx + dy * dy);
+    for (final node in canvasNodes) {
+      final dx = tapPos.dx - node.posX;
+      final dy = tapPos.dy - node.posY;
+      final distance = math.sqrt(dx * dx + dy * dy);
 
       if (distance <= CanvasConstants.nodeRadius + 10) {
         tappedNodeId = node.id;
@@ -256,7 +266,8 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
           selectedNodeId = null;
         } else {
           selectedNodeId = tappedNodeId;
-          _lastSelectedNode = mockNodes.firstWhere((n) => n.id == tappedNodeId);
+          _lastSelectedNode =
+              canvasNodes.firstWhere((n) => n.id == tappedNodeId);
         }
       } else {
         selectedNodeId = null;
@@ -264,59 +275,82 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     });
   }
 
+  void _handleLogout() async {
+    _syncTimer?.cancel();
+    await ApiService.logout();
+
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final activeNode = selectedNodeId != null
-        ? mockNodes.firstWhere((n) => n.id == selectedNodeId)
+        ? canvasNodes.firstWhere(
+            (n) => n.id == selectedNodeId,
+            orElse: () => _lastSelectedNode ?? canvasNodes.first,
+          )
         : _lastSelectedNode;
 
     final selectedAnimation =
         activeNode != null ? _squashAnimations[activeNode.id] : null;
-    final List<Listenable> listenables = _squashAnimations.values.toList();
 
     return Scaffold(
       backgroundColor: CanvasConstants.backgroundColor,
       appBar: AppBar(
-        title: const Text('Feeling Canvas - Modular Architecture'),
+        title: const Text('Feeling Canvas'),
         backgroundColor: CanvasConstants.appBarColor,
         elevation: 0,
-      ),
-      body: Stack(
-        children: [
-          GestureDetector(
-            key: _canvasKey,
-            onTapDown: _onTapCanvas,
-            onPanStart: _onPanStart,
-            onPanUpdate: _onPanUpdate,
-            onPanEnd: _onPanEnd,
-            child: AnimatedBuilder(
-              animation: Listenable.merge(listenables),
-              builder: (context, child) {
-                final Map<String, double> pulseScales = {};
-                _squashAnimations.forEach((id, anim) {
-                  pulseScales[id] = anim.value;
-                });
-
-                return CustomPaint(
-                  size: Size.infinite,
-                  painter: NodePainter(
-                    nodes: mockNodes,
-                    localNodeId: localNodeId,
-                    pulseScales: pulseScales,
-                  ),
-                );
-              },
-            ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.white70),
+            tooltip: 'Cerrar Sesión',
+            onPressed: _handleLogout,
           ),
-          if (activeNode != null)
-            NotificationCard(
-              activeNode: activeNode,
-              isVisible: selectedNodeId != null,
-              localNodeId: localNodeId,
-              pulseAnimation: selectedAnimation,
-            ),
         ],
       ),
+      body: isLoadingNodes
+          ? const Center(child: CircularProgressIndicator())
+          : Stack(
+              children: [
+                GestureDetector(
+                  key: _canvasKey,
+                  onTapDown: _onTapCanvas,
+                  onPanStart: _onPanStart,
+                  onPanUpdate: _onPanUpdate,
+                  onPanEnd: _onPanEnd,
+                  child: AnimatedBuilder(
+                    animation:
+                        Listenable.merge(_squashAnimations.values.toList()),
+                    builder: (context, child) {
+                      final pulseScales = <String, double>{};
+                      _squashAnimations.forEach((id, anim) {
+                        pulseScales[id] = anim.value;
+                      });
+
+                      return CustomPaint(
+                        size: Size.infinite,
+                        painter: NodePainter(
+                          nodes: canvasNodes,
+                          localNodeId: localNodeId,
+                          pulseScales: pulseScales,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                if (activeNode != null)
+                  NotificationCard(
+                    activeNode: activeNode,
+                    isVisible: selectedNodeId != null,
+                    localNodeId: localNodeId,
+                    pulseAnimation: selectedAnimation,
+                  ),
+              ],
+            ),
     );
   }
 }

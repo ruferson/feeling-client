@@ -1,22 +1,48 @@
 import 'dart:convert';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/auth_model.dart';
+import '../models/node_model.dart';
 
 class ApiService {
-  // Base URL pointing to NestJS server
-  static const String baseUrl = 'http://localhost:3000/';
-  static String? _authToken;
+  // Sin prefijo /api para coincidir con tu servidor NestJS
+  static const String baseUrl = 'http://localhost:3000';
+  static String? _token;
+  static String? _currentUserId;
 
-  static void setToken(String token) {
-    _authToken = token;
+  static String? get currentUserId => _currentUserId;
+
+  static Future<bool> initSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    _token = prefs.getString('jwt_token');
+    _currentUserId = prefs.getString('user_id');
+    return _token != null && _token!.isNotEmpty;
+  }
+
+  static Future<void> _saveSession(String token, String userId) async {
+    _token = token;
+    _currentUserId = userId;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('jwt_token', token);
+    await prefs.setString('user_id', userId);
+  }
+
+  static Future<void> logout() async {
+    _token = null;
+    _currentUserId = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('jwt_token');
+    await prefs.remove('user_id');
   }
 
   static Map<String, String> get _headers => {
         'Content-Type': 'application/json',
-        if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+        if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
-  /// Login HTTP request
-  static Future<bool> login(String email, String password) async {
+  static Future<AuthResponse?> login(String email, String password) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/auth/login'),
@@ -25,54 +51,100 @@ class ApiService {
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body);
-        _authToken = data['access_token'] ?? 'mock_jwt_token';
-        return true;
+        final authData = AuthResponse.fromJson(jsonDecode(response.body));
+        if (authData.accessToken.isNotEmpty) {
+          await _saveSession(authData.accessToken, authData.userId);
+          return authData;
+        }
+      } else {
+        if (kDebugMode) {
+          print('Login error [${response.statusCode}]: ${response.body}');
+        }
       }
-      return false;
-    } catch (_) {
-      // Return mock success fallback during initial offline testing
-      _authToken = 'mock_jwt_token_12345';
-      return true;
+    } catch (e) {
+      if (kDebugMode) {
+        print('Login exception: $e');
+      }
     }
+    return null;
   }
 
-  /// Register HTTP request
-  static Future<bool> register(
-      String email, String password, String label) async {
+  static Future<AuthResponse?> register(String email, String password) async {
     try {
+      final math.Random random = math.Random();
+      final double randomX = 0.15 + (random.nextDouble() * 0.70);
+      final double randomY = 0.15 + (random.nextDouble() * 0.70);
+
       final response = await http.post(
         Uri.parse('$baseUrl/auth/register'),
         headers: _headers,
         body: jsonEncode({
           'email': email,
           'password': password,
-          'label': label,
+          'posX': double.parse(randomX.toStringAsFixed(4)),
+          'posY': double.parse(randomY.toStringAsFixed(4)),
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final authData = AuthResponse.fromJson(jsonDecode(response.body));
+        if (authData.accessToken.isNotEmpty) {
+          await _saveSession(authData.accessToken, authData.userId);
+          return authData;
+        }
+      } else {
+        if (kDebugMode) {
+          print('Register error [${response.statusCode}]: ${response.body}');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Register exception: $e');
+      }
+    }
+    return null;
+  }
+
+  static Future<List<NodeModel>> getNodes() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/nodes'),
+        headers: _headers,
+      );
+
+      if (response.statusCode == 200) {
+        final List list = jsonDecode(response.body);
+        return list.map((item) => NodeModel.fromJson(item)).toList();
+      } else {
+        if (kDebugMode) {
+          print('GetNodes error [${response.statusCode}]: ${response.body}');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('GetNodes exception: $e');
+      }
+    }
+    return [];
+  }
+
+  /// Updates local node using real geographical coordinates
+  static Future<bool> updateNodePosition({
+    required double longitude,
+    required double latitude,
+  }) async {
+    try {
+      final response = await http.patch(
+        Uri.parse('$baseUrl/nodes/location'),
+        headers: _headers,
+        body: jsonEncode({
+          'posX': longitude,
+          'posY': latitude,
         }),
       );
       return response.statusCode == 200 || response.statusCode == 201;
-    } catch (_) {
-      return true;
-    }
-  }
-
-  /// Update local node relative position to NestJS API
-  static Future<void> updateNodePosition({
-    required String nodeId,
-    required double relativeX,
-    required double relativeY,
-  }) async {
-    try {
-      await http.patch(
-        Uri.parse('$baseUrl/nodes/$nodeId/position'),
-        headers: _headers,
-        body: jsonEncode({
-          'relativeX': relativeX,
-          'relativeY': relativeY,
-        }),
-      );
-    } catch (_) {
-      // Graceful error handling during offline mock mode
+    } catch (e) {
+      return false;
     }
   }
 }

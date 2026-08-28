@@ -1,20 +1,27 @@
 import 'package:flutter/material.dart';
+import 'screens/auth_screen.dart';
 import 'screens/node_canvas_screen.dart';
+import 'services/api_service.dart';
 
-void main() {
-  runApp(const FeelingApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final bool hasSession = await ApiService.initSession();
+
+  runApp(FeelingApp(initialHasSession: hasSession));
 }
 
 class FeelingApp extends StatelessWidget {
-  const FeelingApp({super.key});
+  final bool initialHasSession;
+
+  const FeelingApp({super.key, required this.initialHasSession});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Feeling App',
+      title: 'Feeling Canvas',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(),
-      home: const NodeCanvasScreen(),
+      home: initialHasSession ? const NodeCanvasScreen() : const AuthScreen(),
     );
   }
 }

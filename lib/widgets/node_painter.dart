@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../config/canvas_constants.dart';
 import '../models/node_model.dart';
@@ -15,7 +16,7 @@ class NodePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Render background grid
+    // 1. Render Background Grid
     final gridPaint = Paint()
       ..color = Colors.white.withOpacity(0.05)
       ..strokeWidth = 1.0;
@@ -27,7 +28,31 @@ class NodePainter extends CustomPainter {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
 
-    // Render nodes
+    NodeModel? localNode;
+    try {
+      localNode = nodes.firstWhere((n) => n.id == localNodeId);
+    } catch (_) {}
+
+    // 2. Render Electric Lightning Bolt ONLY at the precise moment of physical contact
+    if (localNode != null) {
+      final localPos = Offset(localNode.posX, localNode.posY);
+      // Tight distance trigger so the bolt appears strictly on contact
+      const double sparkDistanceThreshold = CanvasConstants.nodeRadius * 1.35;
+
+      for (final remoteNode in nodes) {
+        if (remoteNode.id == localNodeId) continue;
+
+        final remotePos = Offset(remoteNode.posX, remoteNode.posY);
+        final double dist = (localPos - remotePos).distance;
+
+        if (dist <= sparkDistanceThreshold) {
+          final Offset contactPoint = (localPos + remotePos) / 2.0;
+          _drawFlickeringLightning(canvas, contactPoint, localPos, remotePos);
+        }
+      }
+    }
+
+    // 3. Render Node Bodies & Text Labels
     for (final node in nodes) {
       final bool isLocal = node.id == localNodeId;
       final nodeColor = isLocal
@@ -37,14 +62,23 @@ class NodePainter extends CustomPainter {
       final double scale = pulseScales[node.id] ?? 1.0;
       final bool isActive = node.status == 'ACTIVE';
 
+      canvas.save();
+      canvas.translate(node.posX, node.posY);
+
+      // Apply elliptical deformation only to local node
+      if (isLocal && (node.scaleX != 1.0 || node.scaleY != 1.0)) {
+        canvas.rotate(node.rotationAngle);
+        canvas.scale(node.scaleX, node.scaleY);
+      }
+
       if (isActive) {
         final double scaleFactor = scale - 1.0;
-        final double scaleX = 1.0 + scaleFactor * 0.35;
-        final double scaleY = 1.0 - scaleFactor * 0.12;
+        final double bpmScaleX = 1.0 + scaleFactor * 0.35;
+        final double bpmScaleY = 1.0 - scaleFactor * 0.12;
 
-        canvas.save();
-        canvas.translate(node.posX, node.posY);
-        canvas.scale(scaleX, scaleY);
+        if (!isLocal) {
+          canvas.scale(bpmScaleX, bpmScaleY);
+        }
 
         final glowPaint = Paint()
           ..color = nodeColor.withOpacity(isLocal ? 0.35 : 0.25)
@@ -57,22 +91,23 @@ class NodePainter extends CustomPainter {
           ..style = PaintingStyle.fill;
 
         canvas.drawCircle(Offset.zero, 8.0 * scale, corePaint);
-
-        canvas.restore();
       } else {
         final glowPaint = Paint()
           ..color = nodeColor.withOpacity(0.15)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
 
-        canvas.drawCircle(Offset(node.posX, node.posY), 18.0, glowPaint);
+        canvas.drawCircle(Offset.zero, 18.0, glowPaint);
 
         final corePaint = Paint()
           ..color = nodeColor.withOpacity(0.6)
           ..style = PaintingStyle.fill;
 
-        canvas.drawCircle(Offset(node.posX, node.posY), 8.0, corePaint);
+        canvas.drawCircle(Offset.zero, 8.0, corePaint);
       }
 
+      canvas.restore();
+
+      // Render Text Label
       final textSpan = TextSpan(
         text: node.label,
         style: TextStyle(
@@ -89,9 +124,82 @@ class NodePainter extends CustomPainter {
 
       textPainter.paint(
         canvas,
-        Offset(node.posX - (textPainter.width / 2), node.posY + 18.0),
+        Offset(node.posX - (textPainter.width / 2), node.posY + 20.0),
       );
     }
+  }
+
+  /// Draws a flickering jagged lightning bolt artifact strictly at the collision point
+  void _drawFlickeringLightning(
+    Canvas canvas,
+    Offset contactPoint,
+    Offset localPos,
+    Offset remotePos,
+  ) {
+    final math.Random random = math.Random();
+
+    // Random opacity for realistic electric flickering
+    final double flickerOpacity = 0.65 + (random.nextDouble() * 0.35);
+
+    // 1. Electric Outer Glow
+    final glowPaint = Paint()
+      ..color = Colors.cyanAccent.withOpacity(0.40 * flickerOpacity)
+      ..strokeWidth = 3.5
+      ..style = PaintingStyle.stroke
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+
+    // 2. White Core Lightning Stroke
+    final boltPaint = Paint()
+      ..color = Colors.white.withOpacity(flickerOpacity)
+      ..strokeWidth = 1.6
+      ..style = PaintingStyle.stroke;
+
+    final double angle =
+        math.atan2(remotePos.dy - localPos.dy, remotePos.dx - localPos.dx);
+    final double perpAngle = angle + (math.pi / 2);
+
+    // Build jagged zic-zac lightning path
+    final path = Path();
+    const double length = 18.0;
+
+    final Offset start = contactPoint -
+        Offset(math.cos(perpAngle) * (length / 2),
+            math.sin(perpAngle) * (length / 2));
+    final Offset end = contactPoint +
+        Offset(math.cos(perpAngle) * (length / 2),
+            math.sin(perpAngle) * (length / 2));
+
+    path.moveTo(start.dx, start.dy);
+
+    const int steps = 4;
+    for (int i = 1; i < steps; i++) {
+      final double progress = i / steps;
+      final Offset basePoint = Offset(
+        start.dx + (end.dx - start.dx) * progress,
+        start.dy + (end.dy - start.dy) * progress,
+      );
+
+      // Random displacement perpendicular to line vector for jagged lightning shape
+      final double displacement = (random.nextDouble() * 7.0) - 3.5;
+      final Offset jaggedPoint = Offset(
+        basePoint.dx + math.cos(angle) * displacement,
+        basePoint.dy + math.sin(angle) * displacement,
+      );
+
+      path.lineTo(jaggedPoint.dx, jaggedPoint.dy);
+    }
+
+    path.lineTo(end.dx, end.dy);
+
+    canvas.drawPath(path, glowPaint);
+    canvas.drawPath(path, boltPaint);
+
+    // Central flash core
+    final flashCore = Paint()
+      ..color = Colors.white.withOpacity(flickerOpacity)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+
+    canvas.drawCircle(contactPoint, 3.0, flashCore);
   }
 
   @override
