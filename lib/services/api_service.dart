@@ -69,11 +69,21 @@ class ApiService {
     return null;
   }
 
-  static Future<AuthResponse?> register(String email, String password) async {
+  static Future<AuthResponse?> register(
+    String email,
+    String password, {
+    double? longitude,
+    double? latitude,
+  }) async {
     try {
       final math.Random random = math.Random();
-      final double randomX = 0.15 + (random.nextDouble() * 0.70);
-      final double randomY = 0.15 + (random.nextDouble() * 0.70);
+      // Default to global geographic coordinates if none provided
+      final double finalLng = longitude ??
+          double.parse(
+              ((random.nextDouble() * 360.0) - 180.0).toStringAsFixed(6));
+      final double finalLat = latitude ??
+          double.parse(
+              ((random.nextDouble() * 180.0) - 90.0).toStringAsFixed(6));
 
       final response = await http.post(
         Uri.parse('$baseUrl/auth/register'),
@@ -81,8 +91,8 @@ class ApiService {
         body: jsonEncode({
           'email': email,
           'password': password,
-          'posX': double.parse(randomX.toStringAsFixed(4)),
-          'posY': double.parse(randomY.toStringAsFixed(4)),
+          'posX': finalLng,
+          'posY': finalLat,
         }),
       );
 

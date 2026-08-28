@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config/canvas_constants.dart';
 import '../services/api_service.dart';
+import '../services/location_service.dart';
 import 'node_canvas_screen.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -13,6 +14,7 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   bool isLogin = true;
   bool isLoading = false;
+  bool useGPS = true;
 
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -28,7 +30,6 @@ class _AuthScreenState extends State<AuthScreen> {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
-    // Corrected check: validates that email and password are not empty
     if (email.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -49,9 +50,23 @@ class _AuthScreenState extends State<AuthScreen> {
 
     setState(() => isLoading = true);
 
+    Map<String, double>? initialLocation;
+    if (!isLogin) {
+      if (useGPS) {
+        initialLocation = await LocationService.getCurrentGPSLocation();
+      } else {
+        initialLocation = LocationService.getRandomCoordinates();
+      }
+    }
+
     final result = isLogin
         ? await ApiService.login(email, password)
-        : await ApiService.register(email, password);
+        : await ApiService.register(
+            email,
+            password,
+            longitude: initialLocation?['longitude'],
+            latitude: initialLocation?['latitude'],
+          );
 
     setState(() => isLoading = false);
 
@@ -128,7 +143,37 @@ class _AuthScreenState extends State<AuthScreen> {
                     border: OutlineInputBorder(),
                   ),
                 ),
-                const SizedBox(height: 24),
+                if (!isLogin) ...[
+                  const SizedBox(height: 12),
+                  InkWell(
+                    onTap: () => setState(() => useGPS = !useGPS),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Checkbox(
+                            value: useGPS,
+                            activeColor: CanvasConstants.localNodeColor,
+                            onChanged: (val) {
+                              setState(() => useGPS = val ?? true);
+                            },
+                          ),
+                          const Expanded(
+                            child: Text(
+                              'Usar mi posición GPS real al registrarme',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
                   height: 44,

@@ -7,18 +7,22 @@ class NodePainter extends CustomPainter {
   final List<NodeModel> nodes;
   final String localNodeId;
   final Map<String, double> pulseScales;
+  final double fadeInOpacity;
 
   NodePainter({
     required this.nodes,
     required this.localNodeId,
     required this.pulseScales,
+    required this.fadeInOpacity,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (fadeInOpacity <= 0.0) return;
+
     // 1. Render Background Grid
     final gridPaint = Paint()
-      ..color = Colors.white.withOpacity(0.05)
+      ..color = Colors.white.withValues(alpha: 0.05 * fadeInOpacity)
       ..strokeWidth = 1.0;
 
     for (double x = 0; x < size.width; x += CanvasConstants.gridStep) {
@@ -33,10 +37,9 @@ class NodePainter extends CustomPainter {
       localNode = nodes.firstWhere((n) => n.id == localNodeId);
     } catch (_) {}
 
-    // 2. Render Electric Lightning Bolt ONLY at the precise moment of physical contact
+    // 2. Render Electric Lightning Bolt at Contact Point
     if (localNode != null) {
       final localPos = Offset(localNode.posX, localNode.posY);
-      // Tight distance trigger so the bolt appears strictly on contact
       const double sparkDistanceThreshold = CanvasConstants.nodeRadius * 1.35;
 
       for (final remoteNode in nodes) {
@@ -65,7 +68,6 @@ class NodePainter extends CustomPainter {
       canvas.save();
       canvas.translate(node.posX, node.posY);
 
-      // Apply elliptical deformation only to local node
       if (isLocal && (node.scaleX != 1.0 || node.scaleY != 1.0)) {
         canvas.rotate(node.rotationAngle);
         canvas.scale(node.scaleX, node.scaleY);
@@ -81,25 +83,26 @@ class NodePainter extends CustomPainter {
         }
 
         final glowPaint = Paint()
-          ..color = nodeColor.withOpacity(isLocal ? 0.35 : 0.25)
+          ..color = nodeColor.withValues(
+              alpha: (isLocal ? 0.35 : 0.25) * fadeInOpacity)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, 10 * scale);
 
         canvas.drawCircle(Offset.zero, 18.0 * scale, glowPaint);
 
         final corePaint = Paint()
-          ..color = nodeColor
+          ..color = nodeColor.withValues(alpha: fadeInOpacity)
           ..style = PaintingStyle.fill;
 
         canvas.drawCircle(Offset.zero, 8.0 * scale, corePaint);
       } else {
         final glowPaint = Paint()
-          ..color = nodeColor.withOpacity(0.15)
+          ..color = nodeColor.withValues(alpha: 0.15 * fadeInOpacity)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
 
         canvas.drawCircle(Offset.zero, 18.0, glowPaint);
 
         final corePaint = Paint()
-          ..color = nodeColor.withOpacity(0.6)
+          ..color = nodeColor.withValues(alpha: 0.6 * fadeInOpacity)
           ..style = PaintingStyle.fill;
 
         canvas.drawCircle(Offset.zero, 8.0, corePaint);
@@ -111,7 +114,7 @@ class NodePainter extends CustomPainter {
       final textSpan = TextSpan(
         text: node.label,
         style: TextStyle(
-          color: Colors.white.withOpacity(0.9),
+          color: Colors.white.withValues(alpha: 0.9 * fadeInOpacity),
           fontSize: 11.0,
           fontWeight: isLocal ? FontWeight.bold : FontWeight.normal,
         ),
@@ -129,7 +132,6 @@ class NodePainter extends CustomPainter {
     }
   }
 
-  /// Draws a flickering jagged lightning bolt artifact strictly at the collision point
   void _drawFlickeringLightning(
     Canvas canvas,
     Offset contactPoint,
@@ -137,20 +139,17 @@ class NodePainter extends CustomPainter {
     Offset remotePos,
   ) {
     final math.Random random = math.Random();
+    final double flickerOpacity =
+        (0.65 + (random.nextDouble() * 0.35)) * fadeInOpacity;
 
-    // Random opacity for realistic electric flickering
-    final double flickerOpacity = 0.65 + (random.nextDouble() * 0.35);
-
-    // 1. Electric Outer Glow
     final glowPaint = Paint()
-      ..color = Colors.cyanAccent.withOpacity(0.40 * flickerOpacity)
+      ..color = Colors.cyanAccent.withValues(alpha: 0.40 * flickerOpacity)
       ..strokeWidth = 3.5
       ..style = PaintingStyle.stroke
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
 
-    // 2. White Core Lightning Stroke
     final boltPaint = Paint()
-      ..color = Colors.white.withOpacity(flickerOpacity)
+      ..color = Colors.white.withValues(alpha: flickerOpacity)
       ..strokeWidth = 1.6
       ..style = PaintingStyle.stroke;
 
@@ -158,7 +157,6 @@ class NodePainter extends CustomPainter {
         math.atan2(remotePos.dy - localPos.dy, remotePos.dx - localPos.dx);
     final double perpAngle = angle + (math.pi / 2);
 
-    // Build jagged zic-zac lightning path
     final path = Path();
     const double length = 18.0;
 
@@ -179,7 +177,6 @@ class NodePainter extends CustomPainter {
         start.dy + (end.dy - start.dy) * progress,
       );
 
-      // Random displacement perpendicular to line vector for jagged lightning shape
       final double displacement = (random.nextDouble() * 7.0) - 3.5;
       final Offset jaggedPoint = Offset(
         basePoint.dx + math.cos(angle) * displacement,
@@ -194,9 +191,8 @@ class NodePainter extends CustomPainter {
     canvas.drawPath(path, glowPaint);
     canvas.drawPath(path, boltPaint);
 
-    // Central flash core
     final flashCore = Paint()
-      ..color = Colors.white.withOpacity(flickerOpacity)
+      ..color = Colors.white.withValues(alpha: flickerOpacity)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
 
     canvas.drawCircle(contactPoint, 3.0, flashCore);

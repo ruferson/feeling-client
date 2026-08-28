@@ -9,6 +9,7 @@ import '../services/collision_service.dart';
 import '../services/coordinate_service.dart';
 import '../widgets/node_painter.dart';
 import '../widgets/notification_card.dart';
+import '../widgets/world_map_painter.dart';
 import 'auth_screen.dart';
 
 class NodeCanvasScreen extends StatefulWidget {
@@ -24,7 +25,6 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   final GlobalKey _canvasKey = GlobalKey();
 
   List<NodeModel> canvasNodes = [];
-  bool isLoadingNodes = true;
 
   String? selectedNodeId;
   NodeModel? _lastSelectedNode;
@@ -35,6 +35,9 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
 
   Timer? _syncTimer;
 
+  late AnimationController _fadeInController;
+  late Animation<double> _fadeInAnimation;
+
   final Map<String, AnimationController> _bpmControllers = {};
   final Map<String, Animation<double>> _squashAnimations = {};
 
@@ -42,6 +45,27 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   void initState() {
     super.initState();
     localNodeId = ApiService.currentUserId ?? '';
+
+    _fadeInController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+
+    _fadeInAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+          tween: Tween<double>(begin: 0.0, end: 0.15), weight: 15),
+      TweenSequenceItem(
+          tween: Tween<double>(begin: 0.15, end: 0.05), weight: 10),
+      TweenSequenceItem(
+          tween: Tween<double>(begin: 0.05, end: 0.45), weight: 20),
+      TweenSequenceItem(
+          tween: Tween<double>(begin: 0.45, end: 0.25), weight: 15),
+      TweenSequenceItem(
+          tween: Tween<double>(begin: 0.25, end: 1.0), weight: 40),
+    ]).animate(CurvedAnimation(
+      parent: _fadeInController,
+      curve: Curves.easeOut,
+    ));
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _fetchNodesFromBackend();
@@ -55,11 +79,10 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _fadeInController.dispose();
     _clearAnimations();
     super.dispose();
   }
-
-  // --- Helper Methods ---
 
   Size get _canvasSize {
     final renderBox =
@@ -81,13 +104,10 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     _squashAnimations.clear();
   }
 
-  // --- API & State Sync ---
-
   Future<void> _fetchNodesFromBackend() async {
     final canvasSize = _canvasSize;
     final rawNodes = await ApiService.getNodes();
 
-    // 1. Map real Earth coordinates (posX=lng, posY=lat) to screen pixels
     final convertedNodes = rawNodes.map((node) {
       final pixelPos = CoordinateService.geoToPixel(
         longitude: node.posX,
@@ -97,7 +117,6 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
       return node.copyWith(posX: pixelPos.dx, posY: pixelPos.dy);
     }).toList();
 
-    // 2. Resolve visual overlaps for local render (leaves DB coordinates untouched)
     final visuallySeparatedNodes = CollisionService.resolveVisualOverlaps(
       nodes: convertedNodes,
       localNodeId: localNodeId,
@@ -106,11 +125,11 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
 
     setState(() {
       canvasNodes = visuallySeparatedNodes;
-      isLoadingNodes = false;
     });
 
     if (canvasNodes.isNotEmpty) {
       _setupAnimations();
+      _fadeInController.forward(from: 0.0);
     }
   }
 
@@ -166,8 +185,6 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
 
     _isPendingSync = false;
   }
-
-  // --- Interaction & Physics Handlers ---
 
   void _updateLocalPosition(Offset globalPosition) {
     final localPosition = _globalToLocalOffset(globalPosition);
@@ -227,7 +244,6 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
       _isPendingSync = true;
     }
 
-    // Reset elliptical jelly deformation back to standard round shape when released
     final index = canvasNodes.indexWhere((n) => n.id == localNodeId);
     if (index != -1) {
       setState(() {
@@ -298,6 +314,11 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     final selectedAnimation =
         activeNode != null ? _squashAnimations[activeNode.id] : null;
 
+    final List<Listenable> listenables = [
+      _fadeInAnimation,
+      ..._squashAnimations.values,
+    ];
+
     return Scaffold(
       backgroundColor: CanvasConstants.backgroundColor,
       appBar: AppBar(
@@ -312,45 +333,57 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
           ),
         ],
       ),
-      body: isLoadingNodes
-          ? const Center(child: CircularProgressIndicator())
-          : Stack(
-              children: [
-                GestureDetector(
-                  key: _canvasKey,
-                  onTapDown: _onTapCanvas,
-                  onPanStart: _onPanStart,
-                  onPanUpdate: _onPanUpdate,
-                  onPanEnd: _onPanEnd,
-                  child: AnimatedBuilder(
-                    animation:
-                        Listenable.merge(_squashAnimations.values.toList()),
-                    builder: (context, child) {
-                      final pulseScales = <String, double>{};
-                      _squashAnimations.forEach((id, anim) {
-                        pulseScales[id] = anim.value;
-                      });
-
-                      return CustomPaint(
-                        size: Size.infinite,
-                        painter: NodePainter(
-                          nodes: canvasNodes,
-                          localNodeId: localNodeId,
-                          pulseScales: pulseScales,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                if (activeNode != null)
-                  NotificationCard(
-                    activeNode: activeNode,
-                    isVisible: selectedNodeId != null,
-                    localNodeId: localNodeId,
-                    pulseAnimation: selectedAnimation,
-                  ),
-              ],
+      body: Stack(
+        children: [
+          // Layer 1: World Map
+          CustomPaint(
+            size: Size.infinite,
+            painter: WorldMapPainter(
+              screenSize: _canvasSize,
+              onMapLoaded: () {
+                if (mounted) setState(() {});
+              },
             ),
+          ),
+
+          // Layer 2: Interactive Canvas
+          GestureDetector(
+            key: _canvasKey,
+            onTapDown: _onTapCanvas,
+            onPanStart: _onPanStart,
+            onPanUpdate: _onPanUpdate,
+            onPanEnd: _onPanEnd,
+            child: AnimatedBuilder(
+              animation: Listenable.merge(listenables),
+              builder: (context, child) {
+                final pulseScales = <String, double>{};
+                _squashAnimations.forEach((id, anim) {
+                  pulseScales[id] = anim.value;
+                });
+
+                return CustomPaint(
+                  size: Size.infinite,
+                  painter: NodePainter(
+                    nodes: canvasNodes,
+                    localNodeId: localNodeId,
+                    pulseScales: pulseScales,
+                    fadeInOpacity: _fadeInAnimation.value,
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // Layer 3: Notification Card
+          if (activeNode != null)
+            NotificationCard(
+              activeNode: activeNode,
+              isVisible: selectedNodeId != null,
+              localNodeId: localNodeId,
+              pulseAnimation: selectedAnimation,
+            ),
+        ],
+      ),
     );
   }
 }
