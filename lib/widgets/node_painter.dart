@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+
 import '../config/canvas_constants.dart';
 import '../models/node_model.dart';
 
@@ -20,7 +21,12 @@ class NodePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (fadeInOpacity <= 0.0) return;
 
-    // 1. Render Background Grid
+    _drawBackgroundGrid(canvas, size);
+    _drawNodeConnections(canvas);
+    _drawNodesAndLabels(canvas);
+  }
+
+  void _drawBackgroundGrid(Canvas canvas, Size size) {
     final gridPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.05 * fadeInOpacity)
       ..strokeWidth = 1.0;
@@ -31,31 +37,33 @@ class NodePainter extends CustomPainter {
     for (double y = 0; y < size.height; y += CanvasConstants.gridStep) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
+  }
 
+  void _drawNodeConnections(Canvas canvas) {
     NodeModel? localNode;
     try {
       localNode = nodes.firstWhere((n) => n.id == localNodeId);
     } catch (_) {}
 
-    // 2. Render Electric Lightning Bolt at Contact Point
-    if (localNode != null) {
-      final localPos = Offset(localNode.posX, localNode.posY);
-      const double sparkDistanceThreshold = CanvasConstants.nodeRadius * 1.35;
+    if (localNode == null) return;
 
-      for (final remoteNode in nodes) {
-        if (remoteNode.id == localNodeId) continue;
+    final localPos = Offset(localNode.posX, localNode.posY);
+    const double sparkDistanceThreshold = CanvasConstants.nodeRadius * 1.35;
 
-        final remotePos = Offset(remoteNode.posX, remoteNode.posY);
-        final double dist = (localPos - remotePos).distance;
+    for (final remoteNode in nodes) {
+      if (remoteNode.id == localNodeId) continue;
 
-        if (dist <= sparkDistanceThreshold) {
-          final Offset contactPoint = (localPos + remotePos) / 2.0;
-          _drawFlickeringLightning(canvas, contactPoint, localPos, remotePos);
-        }
+      final remotePos = Offset(remoteNode.posX, remoteNode.posY);
+      final double dist = (localPos - remotePos).distance;
+
+      if (dist <= sparkDistanceThreshold) {
+        final Offset contactPoint = (localPos + remotePos) / 2.0;
+        _drawFlickeringLightning(canvas, contactPoint, localPos, remotePos);
       }
     }
+  }
 
-    // 3. Render Node Bodies & Text Labels
+  void _drawNodesAndLabels(Canvas canvas) {
     for (final node in nodes) {
       final bool isLocal = node.id == localNodeId;
       final nodeColor = isLocal
@@ -68,7 +76,9 @@ class NodePainter extends CustomPainter {
       canvas.save();
       canvas.translate(node.posX, node.posY);
 
-      if (isLocal && (node.scaleX != 1.0 || node.scaleY != 1.0)) {
+      // Aplicar deformación y rotación si el nodo se está moviendo o estirando
+      final bool hasDeformation = node.scaleX != 1.0 || node.scaleY != 1.0 || node.rotationAngle != 0.0;
+      if (hasDeformation) {
         canvas.rotate(node.rotationAngle);
         canvas.scale(node.scaleX, node.scaleY);
       }
@@ -78,7 +88,8 @@ class NodePainter extends CustomPainter {
         final double pulseScaleX = 1.0 + scaleFactor * 0.35;
         final double pulseScaleY = 1.0 - scaleFactor * 0.12;
 
-        if (!isLocal) {
+        // Solo aplicar escala de pulso BPM si no se está aplicando la deformación por movimiento
+        if (!isLocal && !hasDeformation) {
           canvas.scale(pulseScaleX, pulseScaleY);
         }
 

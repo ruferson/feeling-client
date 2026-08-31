@@ -1,13 +1,13 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../config/canvas_constants.dart';
+import '../controllers/canvas_animation_controller.dart';
 import '../models/node_model.dart';
 import '../services/api_service.dart';
+import '../services/canvas_sync_service.dart';
 import '../services/collision_service.dart';
 import '../services/coordinate_service.dart';
-import '../services/node_socket_service.dart';
 import '../widgets/node_painter.dart';
 import '../widgets/notification_card.dart';
 import '../widgets/world_map_painter.dart';
@@ -22,86 +22,34 @@ class NodeCanvasScreen extends StatefulWidget {
 
 class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     with TickerProviderStateMixin {
-  
-  // Animation controllers and tweens for smooth node displacement
-  final Map<String, AnimationController> _moveControllers = {};
-  final Map<String, Animation<Offset>> _moveAnimations = {};
-  
   late final String localNodeId;
   final GlobalKey _canvasKey = GlobalKey();
+
+  late final CanvasAnimationController _animController;
+  late final CanvasSyncService _syncService;
 
   List<NodeModel> canvasNodes = [];
 
   String? selectedNodeId;
   NodeModel? _lastSelectedNode;
 
-  // Touch and interaction state flags
   bool isDraggingLocal = false;
   bool _hasMovedDuringCurrentDrag = false;
-  bool _isPendingSync = false;
-
-  Timer? _syncTimer;
-  Timer? _canvasRefreshTimer;
-
-  // Initial entrance fade-in animation
-  late AnimationController _fadeInController;
-  late Animation<double> _fadeInAnimation;
-
-  // Music beat visualization controllers
-  final Map<String, AnimationController> _bpmControllers = {};
-  final Map<String, Animation<double>> _squashAnimations = {};
 
   @override
   void initState() {
     super.initState();
     localNodeId = ApiService.currentUserId ?? '';
 
-    // Configure flickered entrance fade-in sequence
-    _fadeInController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    );
+    _animController = CanvasAnimationController(vsync: this);
+    _syncService = CanvasSyncService();
 
-    _fadeInAnimation = TweenSequence<double>([
-      TweenSequenceItem(
-          tween: Tween<double>(begin: 0.0, end: 0.15), weight: 15),
-      TweenSequenceItem(
-          tween: Tween<double>(begin: 0.15, end: 0.05), weight: 10),
-      TweenSequenceItem(
-          tween: Tween<double>(begin: 0.05, end: 0.45), weight: 20),
-      TweenSequenceItem(
-          tween: Tween<double>(begin: 0.45, end: 0.25), weight: 15),
-      TweenSequenceItem(
-          tween: Tween<double>(begin: 0.25, end: 1.0), weight: 40),
-    ]).animate(CurvedAnimation(
-      parent: _fadeInController,
-      curve: Curves.easeOut,
-    ));
-
-    // Connect to WebSockets namespace /nodes and listen for real-time updates
-    NodeSocketService.connect(
-      onNodeUpdated: (data) {
-        if (!mounted) return;
-
-        final String updatedUserId = data['userId'];
-        final Map<String, dynamic> updatedNodeData = data['node'];
-
-        // Ignore updates if user is actively dragging local node
-        if (updatedUserId == localNodeId && isDraggingLocal) return;
-
-        final double rawX = (updatedNodeData['posX'] as num).toDouble();
-        final double rawY = (updatedNodeData['posY'] as num).toDouble();
-
-        // Convert geographic coordinates (Lng/Lat) to local pixel space
-        final pixelPos = CoordinateService.geoToPixel(
-          longitude: rawX,
-          latitude: rawY,
-          screenSize: _canvasSize,
-        );
-
-        final targetOffset = Offset(pixelPos.dx, pixelPos.dy);
-
-        final index = canvasNodes.indexWhere((n) => n.id == updatedUserId);
+    _syncService.startSync(
+      localNodeId: localNodeId,
+      getCanvasSize: () => _canvasSize,
+      isDraggingLocal: () => isDraggingLocal,
+      onWebSocketNodeMoved: (userId, targetPixelPos) {
+        final index = canvasNodes.indexWhere((n) => n.id == userId);
         if (index == -1) return;
 
         final startOffset = Offset(
@@ -109,79 +57,57 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
           canvasNodes[index].posY,
         );
 
-        final double distance = (targetOffset - startOffset).distance;
-        if (distance < 1.0) return;
+        _animController.animateNodeMovement(
+          userId: userId,
+          startOffset: startOffset,
+          targetOffset: targetPixelPos,
+          onUpdate: () {
+            if (!mounted) return;
+            final posAnim = _animController.moveAnimations[userId];
+            final stretchAnim = _animController.moveStretchAnimations[userId];
+            final rotationAngle = _animController.moveRotationAngles[userId] ?? 0.0;
+            if (posAnim == null) return;
 
-        // Dispose running animation for this node if a new update arrives
-        _moveControllers[updatedUserId]?.dispose();
+            final double stretch = stretchAnim?.value ?? 1.0;
+            
+            // Fórmula para alargar en el eje de avance (scaleX) y comprimir el eje transversal (scaleY)
+            final double scaleX = stretch;
+            final double scaleY = 1.0 / math.sqrt(stretch);
 
-        // Ultra-snappy duration (250ms to 350ms)
-        final controller = AnimationController(
-          vsync: this,
-          duration: Duration(milliseconds: distance > 100.0 ? 350 : 250),
+            setState(() {
+              final currentIndex =
+                  canvasNodes.indexWhere((n) => n.id == userId);
+              if (currentIndex != -1) {
+                canvasNodes[currentIndex] = canvasNodes[currentIndex].copyWith(
+                  posX: posAnim.value.dx,
+                  posY: posAnim.value.dy,
+                  scaleX: scaleX,
+                  scaleY: scaleY,
+                  rotationAngle: rotationAngle,
+                );
+              }
+            });
+          },
         );
-
-        // Micro-overshoot cubic curve: 1.03 overshoot (scarcely 1 to 3 pixels of displacement)
-        const microSnapCurve = Cubic(0.2, 0.9, 0.2, 1.03);
-
-        final animation = Tween<Offset>(
-          begin: startOffset,
-          end: targetOffset,
-        ).animate(CurvedAnimation(
-          parent: controller,
-          curve: distance > 100.0 ? microSnapCurve : Curves.easeOutCubic,
-        ));
-
-        animation.addListener(() {
-          if (!mounted) return;
-          setState(() {
-            final currentIndex =
-                canvasNodes.indexWhere((n) => n.id == updatedUserId);
-            if (currentIndex != -1) {
-              canvasNodes[currentIndex] = canvasNodes[currentIndex].copyWith(
-                posX: animation.value.dx,
-                posY: animation.value.dy,
-              );
-            }
-          });
-        });
-
-        _moveControllers[updatedUserId] = controller;
-        _moveAnimations[updatedUserId] = animation;
-
-        controller.forward();
       },
+      onNodesFetched: _handleFetchedNodes,
     );
 
-    // Initial node fetch after context initialization
+    _syncService.startPositionSyncTimer(
+      localNodeId: localNodeId,
+      getCanvasNodes: () => canvasNodes,
+      getCanvasSize: () => _canvasSize,
+    );
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _fetchNodesFromBackend();
-    });
-
-    // Schedule periodic position syncing and canvas refresh tasks
-    _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      _syncPositionToBackend();
-    });
-
-    _canvasRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _fetchNodesFromBackend();
     });
   }
 
   @override
   void dispose() {
-    // Release movement animation controllers
-    for (final controller in _moveControllers.values) {
-      controller.dispose();
-    }
-    _moveControllers.clear();
-    _moveAnimations.clear();
-
-    NodeSocketService.disconnect();
-    _syncTimer?.cancel();
-    _canvasRefreshTimer?.cancel();
-    _fadeInController.dispose();
-    _clearAnimations();
+    _syncService.dispose();
+    _animController.dispose();
     super.dispose();
   }
 
@@ -197,18 +123,13 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     return renderBox?.globalToLocal(globalPosition);
   }
 
-  void _clearAnimations() {
-    for (final controller in _bpmControllers.values) {
-      controller.dispose();
-    }
-    _bpmControllers.clear();
-    _squashAnimations.clear();
+  Future<void> _fetchNodesFromBackend() async {
+    final rawNodes = await ApiService.getNodes();
+    _handleFetchedNodes(rawNodes);
   }
 
-  // Fetch node states via HTTP REST API
-  Future<void> _fetchNodesFromBackend() async {
+  void _handleFetchedNodes(List<NodeModel> rawNodes) {
     final canvasSize = _canvasSize;
-    final rawNodes = await ApiService.getNodes();
 
     if (canvasNodes.isNotEmpty) {
       final nodesById = {
@@ -230,15 +151,34 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
             isPlaying: refreshedNode.isPlaying,
             songTitle: refreshedNode.songTitle,
             artist: refreshedNode.artist,
+            label: refreshedNode.label,
           );
         }).toList();
         canvasNodes = updatedNodes;
+
+        // Keep _lastSelectedNode updated with fresh Spotify info
+        if (_lastSelectedNode != null) {
+          final freshSelected = nodesById[_lastSelectedNode!.id];
+          if (freshSelected != null) {
+            _lastSelectedNode = _lastSelectedNode!.copyWith(
+              status: freshSelected.status,
+              bpm: freshSelected.bpm,
+              bpmEstimated: freshSelected.bpmEstimated,
+              isPlaying: freshSelected.isPlaying,
+              songTitle: freshSelected.songTitle,
+              artist: freshSelected.artist,
+            );
+          }
+        }
       });
-      _updateAnimationsForRefresh(previousNodes, updatedNodes);
+
+      _animController.updateBpmAnimationsForRefresh(
+        previousNodes,
+        updatedNodes,
+      );
       return;
     }
 
-    // Convert raw geographic points into canvas screen space
     final convertedNodes = rawNodes.map((node) {
       final pixelPos = CoordinateService.geoToPixel(
         longitude: node.posX,
@@ -248,7 +188,6 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
       return node.copyWith(posX: pixelPos.dx, posY: pixelPos.dy);
     }).toList();
 
-    // Prevent initial overlaps between nodes
     final visuallySeparatedNodes = CollisionService.resolveVisualOverlaps(
       nodes: convertedNodes,
       localNodeId: localNodeId,
@@ -261,111 +200,11 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     });
 
     if (canvasNodes.isNotEmpty) {
-      _setupAnimations();
-      _fadeInController.forward(from: 0.0);
+      _animController.setupBpmAnimations(canvasNodes);
+      _animController.fadeInController.forward(from: 0.0);
     }
   }
 
-  void _setupAnimations() {
-    _clearAnimations();
-
-    for (final node in canvasNodes) {
-      if (_shouldAnimate(node)) _createAnimation(node);
-    }
-  }
-
-  bool _shouldAnimate(NodeModel node) {
-    return node.status == 'ACTIVE' && node.isPlaying;
-  }
-
-  int _animationBpm(NodeModel node) {
-    return node.bpm > 0 ? node.bpm : 100;
-  }
-
-  // Create beat rhythm pulse animation
-  void _createAnimation(NodeModel node) {
-    final beatDurationMs = (60.0 / _animationBpm(node)) * 1000;
-    final controller = AnimationController(
-      vsync: this,
-      duration: Duration(milliseconds: beatDurationMs.round()),
-    )..repeat();
-
-    final animation = TweenSequence<double>([
-      TweenSequenceItem(
-        tween: Tween<double>(begin: 1.0, end: 1.30).chain(
-          CurveTween(curve: const Cubic(0.05, 0.9, 0.1, 1.0)),
-        ),
-        weight: 20,
-      ),
-      TweenSequenceItem(
-        tween: Tween<double>(begin: 1.30, end: 1.0).chain(
-          CurveTween(curve: Curves.easeOutCubic),
-        ),
-        weight: 80,
-      ),
-    ]).animate(controller);
-
-    _bpmControllers[node.id] = controller;
-    _squashAnimations[node.id] = animation;
-  }
-
-  void _updateAnimationsForRefresh(
-    List<NodeModel> previousNodes,
-    List<NodeModel> updatedNodes,
-  ) {
-    final previousById = {
-      for (final node in previousNodes) node.id: node,
-    };
-
-    for (final node in updatedNodes) {
-      final previousNode = previousById[node.id];
-      final animationShouldExist = _shouldAnimate(node);
-      final animationExists = _bpmControllers.containsKey(node.id);
-      final bpmChanged = previousNode == null ||
-          _animationBpm(previousNode) != _animationBpm(node) ||
-          _shouldAnimate(previousNode) != animationShouldExist;
-
-      if (!animationShouldExist) {
-        _disposeAnimation(node.id);
-      } else if (!animationExists || bpmChanged) {
-        _disposeAnimation(node.id);
-        _createAnimation(node);
-      }
-    }
-
-    final currentIds = updatedNodes.map((node) => node.id).toSet();
-    for (final nodeId in _bpmControllers.keys.toList()) {
-      if (!currentIds.contains(nodeId)) _disposeAnimation(nodeId);
-    }
-  }
-
-  void _disposeAnimation(String nodeId) {
-    _bpmControllers.remove(nodeId)?.dispose();
-    _squashAnimations.remove(nodeId);
-  }
-
-  // Persist local node updates back to the server
-  void _syncPositionToBackend() {
-    if (!_isPendingSync || localNodeId.isEmpty) return;
-
-    final localNodeIndex = canvasNodes.indexWhere((n) => n.id == localNodeId);
-    if (localNodeIndex == -1) return;
-
-    final localNode = canvasNodes[localNodeIndex];
-    final geo = CoordinateService.pixelToGeo(
-      pixelPos: Offset(localNode.posX, localNode.posY),
-      screenSize: _canvasSize,
-    );
-
-    ApiService.updateNodePosition(
-      longitude: geo['longitude']!,
-      latitude: geo['latitude']!,
-    );
-
-    _isPendingSync = false;
-  }
-
-  // Handle local user dragging physics and constraints
   void _updateLocalPosition(Offset globalPosition) {
     final localPosition = _globalToLocalOffset(globalPosition);
     if (localPosition == null) return;
@@ -421,7 +260,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
 
   void _onPanEnd(DragEndDetails details) {
     if (isDraggingLocal && _hasMovedDuringCurrentDrag) {
-      _isPendingSync = true;
+      _syncService.markPendingSync();
     }
 
     final index = canvasNodes.indexWhere((n) => n.id == localNodeId);
@@ -439,7 +278,6 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     _hasMovedDuringCurrentDrag = false;
   }
 
-  // Select or unselect nodes upon canvas tap
   void _onTapCanvas(TapDownDetails details) {
     final tapPos = _globalToLocalOffset(details.globalPosition);
     if (tapPos == null) return;
@@ -473,7 +311,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   }
 
   void _handleLogout() async {
-    _syncTimer?.cancel();
+    _syncService.dispose();
     await ApiService.logout();
 
     if (mounted) {
@@ -485,19 +323,24 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
 
   @override
   Widget build(BuildContext context) {
-    final activeNode = selectedNodeId != null
-        ? canvasNodes.firstWhere(
-            (n) => n.id == selectedNodeId,
-            orElse: () => _lastSelectedNode ?? canvasNodes.first,
-          )
-        : _lastSelectedNode;
+    final String? activeId = selectedNodeId ?? _lastSelectedNode?.id;
+    
+    NodeModel? activeNode;
+    if (activeId != null) {
+      try {
+        activeNode = canvasNodes.firstWhere((n) => n.id == activeId);
+      } catch (_) {
+        activeNode = _lastSelectedNode;
+      }
+    }
 
-    final selectedAnimation =
-        activeNode != null ? _squashAnimations[activeNode.id] : null;
+    final selectedAnimation = activeNode != null
+        ? _animController.squashAnimations[activeNode.id]
+        : null;
 
     final List<Listenable> listenables = [
-      _fadeInAnimation,
-      ..._squashAnimations.values,
+      _animController.fadeInAnimation,
+      ..._animController.squashAnimations.values,
     ];
 
     return Scaffold(
@@ -538,7 +381,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
               animation: Listenable.merge(listenables),
               builder: (context, child) {
                 final pulseScales = <String, double>{};
-                _squashAnimations.forEach((id, anim) {
+                _animController.squashAnimations.forEach((id, anim) {
                   pulseScales[id] = anim.value;
                 });
 
@@ -548,7 +391,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
                     nodes: canvasNodes,
                     localNodeId: localNodeId,
                     pulseScales: pulseScales,
-                    fadeInOpacity: _fadeInAnimation.value,
+                    fadeInOpacity: _animController.fadeInAnimation.value,
                   ),
                 );
               },
