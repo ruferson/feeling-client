@@ -7,6 +7,7 @@ import '../models/node_model.dart';
 import '../services/api_service.dart';
 import '../services/collision_service.dart';
 import '../services/coordinate_service.dart';
+import '../services/node_socket_service.dart';
 import '../widgets/node_painter.dart';
 import '../widgets/notification_card.dart';
 import '../widgets/world_map_painter.dart';
@@ -21,6 +22,11 @@ class NodeCanvasScreen extends StatefulWidget {
 
 class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     with TickerProviderStateMixin {
+  
+  // Animation controllers and tweens for smooth node displacement
+  final Map<String, AnimationController> _moveControllers = {};
+  final Map<String, Animation<Offset>> _moveAnimations = {};
+  
   late final String localNodeId;
   final GlobalKey _canvasKey = GlobalKey();
 
@@ -29,6 +35,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   String? selectedNodeId;
   NodeModel? _lastSelectedNode;
 
+  // Touch and interaction state flags
   bool isDraggingLocal = false;
   bool _hasMovedDuringCurrentDrag = false;
   bool _isPendingSync = false;
@@ -36,9 +43,11 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   Timer? _syncTimer;
   Timer? _canvasRefreshTimer;
 
+  // Initial entrance fade-in animation
   late AnimationController _fadeInController;
   late Animation<double> _fadeInAnimation;
 
+  // Music beat visualization controllers
   final Map<String, AnimationController> _bpmControllers = {};
   final Map<String, Animation<double>> _squashAnimations = {};
 
@@ -47,6 +56,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     super.initState();
     localNodeId = ApiService.currentUserId ?? '';
 
+    // Configure flickered entrance fade-in sequence
     _fadeInController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -68,10 +78,87 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
       curve: Curves.easeOut,
     ));
 
+    // Connect to WebSockets namespace /nodes and listen for real-time updates
+    NodeSocketService.connect(
+      onNodeUpdated: (data) {
+        if (!mounted) return;
+
+        final String updatedUserId = data['userId'];
+        final Map<String, dynamic> updatedNodeData = data['node'];
+
+        // Ignore updates if user is actively dragging local node
+        if (updatedUserId == localNodeId && isDraggingLocal) return;
+
+        final double rawX = (updatedNodeData['posX'] as num).toDouble();
+        final double rawY = (updatedNodeData['posY'] as num).toDouble();
+
+        // Convert geographic coordinates (Lng/Lat) to local pixel space
+        final pixelPos = CoordinateService.geoToPixel(
+          longitude: rawX,
+          latitude: rawY,
+          screenSize: _canvasSize,
+        );
+
+        final targetOffset = Offset(pixelPos.dx, pixelPos.dy);
+
+        final index = canvasNodes.indexWhere((n) => n.id == updatedUserId);
+        if (index == -1) return;
+
+        final startOffset = Offset(
+          canvasNodes[index].posX,
+          canvasNodes[index].posY,
+        );
+
+        final double distance = (targetOffset - startOffset).distance;
+        if (distance < 1.0) return;
+
+        // Dispose running animation for this node if a new update arrives
+        _moveControllers[updatedUserId]?.dispose();
+
+        // Ultra-snappy duration (250ms to 350ms)
+        final controller = AnimationController(
+          vsync: this,
+          duration: Duration(milliseconds: distance > 100.0 ? 350 : 250),
+        );
+
+        // Micro-overshoot cubic curve: 1.03 overshoot (scarcely 1 to 3 pixels of displacement)
+        const microSnapCurve = Cubic(0.2, 0.9, 0.2, 1.03);
+
+        final animation = Tween<Offset>(
+          begin: startOffset,
+          end: targetOffset,
+        ).animate(CurvedAnimation(
+          parent: controller,
+          curve: distance > 100.0 ? microSnapCurve : Curves.easeOutCubic,
+        ));
+
+        animation.addListener(() {
+          if (!mounted) return;
+          setState(() {
+            final currentIndex =
+                canvasNodes.indexWhere((n) => n.id == updatedUserId);
+            if (currentIndex != -1) {
+              canvasNodes[currentIndex] = canvasNodes[currentIndex].copyWith(
+                posX: animation.value.dx,
+                posY: animation.value.dy,
+              );
+            }
+          });
+        });
+
+        _moveControllers[updatedUserId] = controller;
+        _moveAnimations[updatedUserId] = animation;
+
+        controller.forward();
+      },
+    );
+
+    // Initial node fetch after context initialization
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _fetchNodesFromBackend();
     });
 
+    // Schedule periodic position syncing and canvas refresh tasks
     _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _syncPositionToBackend();
     });
@@ -83,8 +170,16 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
 
   @override
   void dispose() {
-    _canvasRefreshTimer?.cancel();
+    // Release movement animation controllers
+    for (final controller in _moveControllers.values) {
+      controller.dispose();
+    }
+    _moveControllers.clear();
+    _moveAnimations.clear();
+
+    NodeSocketService.disconnect();
     _syncTimer?.cancel();
+    _canvasRefreshTimer?.cancel();
     _fadeInController.dispose();
     _clearAnimations();
     super.dispose();
@@ -110,6 +205,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     _squashAnimations.clear();
   }
 
+  // Fetch node states via HTTP REST API
   Future<void> _fetchNodesFromBackend() async {
     final canvasSize = _canvasSize;
     final rawNodes = await ApiService.getNodes();
@@ -142,6 +238,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
       return;
     }
 
+    // Convert raw geographic points into canvas screen space
     final convertedNodes = rawNodes.map((node) {
       final pixelPos = CoordinateService.geoToPixel(
         longitude: node.posX,
@@ -151,6 +248,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
       return node.copyWith(posX: pixelPos.dx, posY: pixelPos.dy);
     }).toList();
 
+    // Prevent initial overlaps between nodes
     final visuallySeparatedNodes = CollisionService.resolveVisualOverlaps(
       nodes: convertedNodes,
       localNodeId: localNodeId,
@@ -184,6 +282,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     return node.bpm > 0 ? node.bpm : 100;
   }
 
+  // Create beat rhythm pulse animation
   void _createAnimation(NodeModel node) {
     final beatDurationMs = (60.0 / _animationBpm(node)) * 1000;
     final controller = AnimationController(
@@ -245,6 +344,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     _squashAnimations.remove(nodeId);
   }
 
+  // Persist local node updates back to the server
   void _syncPositionToBackend() {
     if (!_isPendingSync || localNodeId.isEmpty) return;
 
@@ -265,6 +365,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     _isPendingSync = false;
   }
 
+  // Handle local user dragging physics and constraints
   void _updateLocalPosition(Offset globalPosition) {
     final localPosition = _globalToLocalOffset(globalPosition);
     if (localPosition == null) return;
@@ -338,6 +439,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     _hasMovedDuringCurrentDrag = false;
   }
 
+  // Select or unselect nodes upon canvas tap
   void _onTapCanvas(TapDownDetails details) {
     final tapPos = _globalToLocalOffset(details.globalPosition);
     if (tapPos == null) return;
@@ -414,7 +516,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
       ),
       body: Stack(
         children: [
-          // Layer 1: World Map
+          // Layer 1: World Map Coastlines
           CustomPaint(
             size: Size.infinite,
             painter: WorldMapPainter(
@@ -425,7 +527,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
             ),
           ),
 
-          // Layer 2: Interactive Canvas
+          // Layer 2: Interactive Nodes Canvas
           GestureDetector(
             key: _canvasKey,
             onTapDown: _onTapCanvas,
@@ -453,7 +555,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
             ),
           ),
 
-          // Layer 3: Notification Card
+          // Layer 3: Spotify Song Info Notification Card
           if (activeNode != null)
             NotificationCard(
               activeNode: activeNode,

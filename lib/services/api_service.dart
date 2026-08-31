@@ -13,6 +13,7 @@ class ApiService {
   static String? _currentUserId;
 
   static String? get currentUserId => _currentUserId;
+  static String? get token => _token;
 
   static Future<bool> initSession() async {
     final prefs = await SharedPreferences.getInstance();
