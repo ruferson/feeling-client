@@ -8,7 +8,7 @@ import 'api_service.dart';
 class SpotifyService {
   static Future<bool> connectSpotify() async {
     try {
-      // 1. Obtener la URL de autorización desde FastAPI (.env)
+      // 1. Fetch authorization URL from FastAPI (.env)
       final authUrl = await ApiService.getSpotifyLoginUrl();
       if (authUrl == null || authUrl.isEmpty) return false;
 

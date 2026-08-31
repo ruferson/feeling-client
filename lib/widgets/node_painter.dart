@@ -75,11 +75,11 @@ class NodePainter extends CustomPainter {
 
       if (isActive) {
         final double scaleFactor = scale - 1.0;
-        final double bpmScaleX = 1.0 + scaleFactor * 0.35;
-        final double bpmScaleY = 1.0 - scaleFactor * 0.12;
+        final double pulseScaleX = 1.0 + scaleFactor * 0.35;
+        final double pulseScaleY = 1.0 - scaleFactor * 0.12;
 
         if (!isLocal) {
-          canvas.scale(bpmScaleX, bpmScaleY);
+          canvas.scale(pulseScaleX, pulseScaleY);
         }
 
         final glowPaint = Paint()

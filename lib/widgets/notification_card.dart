@@ -35,7 +35,7 @@ class _NotificationCardState extends State<NotificationCard> {
     if (success) {
       await widget.onSpotifyConnected?.call();
       if (!mounted) return;
-      // Fuerza la actualización de los nodos para que la UI refleje la canción actual
+      // Force node update so UI reflects currently playing song
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -130,9 +130,7 @@ class _NotificationCardState extends State<NotificationCard> {
                           ),
                           Text(
                             hasSong
-                                ? widget.activeNode.bpm > 0
-                                    ? 'BPM: ${widget.activeNode.bpm}${widget.activeNode.bpmEstimated ? ' (estimado)' : ''} • Synced'
-                                    : 'BPM no disponible • Synced'
+                                ? 'Reproduciendo en Spotify'
                                 : widget.activeNode.label,
                             style: TextStyle(
                               color: Colors.white.withValues(alpha: 0.7),
