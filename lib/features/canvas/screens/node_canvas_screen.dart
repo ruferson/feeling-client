@@ -2,19 +2,19 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
-import '../config/canvas_constants.dart';
+import '../../../core/config/canvas_constants.dart';
 import '../controllers/canvas_animation_controller.dart';
-import '../models/friend_request_model.dart';
+import '../../friends/models/friend_request_model.dart';
 import '../models/node_model.dart';
-import '../services/api_service.dart';
+import '../../../core/services/api_service.dart';
 import '../services/canvas_sync_service.dart';
-import '../services/collision_service.dart';
-import '../services/coordinate_service.dart';
-import '../widgets/friends_sidebar.dart';
+import '../../../core/utils/collision_service.dart';
+import '../../../core/utils/coordinate_service.dart';
+import '../../friends/widgets/friends_sidebar.dart';
 import '../widgets/node_painter.dart';
 import '../widgets/notification_card.dart';
 import '../widgets/world_map_painter.dart';
-import 'auth_screen.dart';
+import '../../auth/screens/auth_screen.dart';
 
 class NodeCanvasScreen extends StatefulWidget {
   const NodeCanvasScreen({super.key});

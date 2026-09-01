@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import '../config/canvas_constants.dart';
-import '../services/api_service.dart';
-import '../services/location_service.dart';
-import 'node_canvas_screen.dart';
+import '../../../core/config/canvas_constants.dart';
+import '../../../core/services/api_service.dart';
+import '../../../core/services/location_service.dart';
+import '../../canvas/screens/node_canvas_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -62,16 +62,15 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     }
 
-    final result =
-        isLogin
-            ? await ApiService.login(username, password)
-            : await ApiService.register(
-              username,
-              email,
-              password,
-              longitude: initialLocation?['longitude'],
-              latitude: initialLocation?['latitude'],
-            );
+    final result = isLogin
+        ? await ApiService.login(username, password)
+        : await ApiService.register(
+            username,
+            email,
+            password,
+            longitude: initialLocation?['longitude'],
+            latitude: initialLocation?['latitude'],
+          );
 
     setState(() => isLoading = false);
 
@@ -202,19 +201,18 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                     ),
                     onPressed: isLoading ? null : _submit,
-                    child:
-                        isLoading
-                            ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                            : Text(
-                              isLogin ? 'Entrar' : 'Registrarse',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
+                    child: isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(
+                            isLogin ? 'Entrar' : 'Registrarse',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
                             ),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 12),

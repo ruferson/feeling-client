@@ -4,9 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/auth_model.dart';
-import '../models/friend_request_model.dart';
-import '../models/node_model.dart';
+import '../../features/auth/models/auth_model.dart';
+import '../../features/friends/models/friend_request_model.dart';
+import '../../features/canvas/models/node_model.dart';
 
 class ApiService {
   // Base API configuration (NestJS default port without /api prefix)

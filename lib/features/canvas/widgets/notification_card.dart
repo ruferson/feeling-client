@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import '../config/canvas_constants.dart';
+import '../../../core/config/canvas_constants.dart';
 import '../models/node_model.dart';
-import '../services/api_service.dart';
-import '../services/spotify_service.dart';
+import '../../../core/services/api_service.dart';
+import '../../../core/services/spotify_service.dart';
 
 class NotificationCard extends StatefulWidget {
   final NodeModel activeNode;

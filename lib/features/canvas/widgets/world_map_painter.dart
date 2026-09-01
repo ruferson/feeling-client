@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import '../services/coordinate_service.dart';
+import '../../../core/utils/coordinate_service.dart';
 
 class WorldMapPainter extends CustomPainter {
   static List<List<Offset>>? _cachedCoastlines;

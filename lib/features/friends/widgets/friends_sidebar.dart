@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../config/canvas_constants.dart';
+import '../../../core/config/canvas_constants.dart';
 import '../models/friend_request_model.dart';
-import '../services/api_service.dart';
+import '../../../core/services/api_service.dart';
 
 class FriendsSidebar extends StatefulWidget {
   final VoidCallback onClose;

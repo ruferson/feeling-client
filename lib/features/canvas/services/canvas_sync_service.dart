@@ -2,8 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/node_model.dart';
-import 'api_service.dart';
-import 'coordinate_service.dart';
+import '../../../core/services/api_service.dart';
+import '../../../core/utils/coordinate_service.dart';
 import 'node_socket_service.dart';
 
 class CanvasSyncService {
@@ -20,7 +20,8 @@ class CanvasSyncService {
     required String localNodeId,
     required Size Function() getCanvasSize,
     required bool Function() isDraggingLocal,
-    required Function(String userId, Offset targetPixelPos) onWebSocketNodeMoved,
+    required Function(String userId, Offset targetPixelPos)
+        onWebSocketNodeMoved,
     required Function(List<NodeModel> rawNodes) onNodesFetched,
   }) {
     NodeSocketService.connect(
@@ -43,7 +44,8 @@ class CanvasSyncService {
       },
     );
 
-    _canvasRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+    _canvasRefreshTimer =
+        Timer.periodic(const Duration(seconds: 10), (_) async {
       final rawNodes = await ApiService.getNodes();
       onNodesFetched(rawNodes);
     });

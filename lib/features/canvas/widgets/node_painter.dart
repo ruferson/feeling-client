@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
-import '../config/canvas_constants.dart';
+import '../../../core/config/canvas_constants.dart';
 import '../models/node_model.dart';
 
 class NodePainter extends CustomPainter {
