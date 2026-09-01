@@ -1,14 +1,11 @@
-import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../../../core/services/api_service.dart';
 
 class NodeSocketService {
   static io.Socket? _socket;
 
-  /// Returns the current Socket instance
   static io.Socket? get socket => _socket;
 
-  /// Initializes the WebSocket connection to NestJS
   static void connect({required Function(Map<String, dynamic>) onNodeUpdated}) {
     if (_socket != null && _socket!.connected) return;
 
@@ -25,11 +22,7 @@ class NodeSocketService {
 
     _socket!.connect();
 
-    _socket!.onConnect((_) {
-      if (kDebugMode) {
-        print('Connected to WebSocket namespace /nodes');
-      }
-    });
+    _socket!.onConnect((_) {});
 
     _socket!.on('node_updated', (data) {
       if (data != null && data is Map<String, dynamic>) {
@@ -37,20 +30,10 @@ class NodeSocketService {
       }
     });
 
-    _socket!.onDisconnect((_) {
-      if (kDebugMode) {
-        print('Disconnected from WebSocket namespace /nodes');
-      }
-    });
-
-    _socket!.onError((err) {
-      if (kDebugMode) {
-        print('WebSocket Error: $err');
-      }
-    });
+    _socket!.onDisconnect((_) {});
+    _socket!.onError((_) {});
   }
 
-  /// Disconnects and cleans up the WebSocket instance
   static void disconnect() {
     _socket?.off('node_updated');
     _socket?.disconnect();

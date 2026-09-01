@@ -8,25 +8,21 @@ import 'api_service.dart';
 class SpotifyService {
   static Future<bool> connectSpotify() async {
     try {
-      // 1. Fetch authorization URL from FastAPI (.env)
       final authUrl = await ApiService.getSpotifyLoginUrl();
       if (authUrl == null || authUrl.isEmpty) return false;
 
       if (kIsWeb) {
         return await _authenticateWeb(authUrl);
-      } else {
-        final result = await FlutterWebAuth2.authenticate(
-          url: authUrl,
-          callbackUrlScheme: 'feelingcanvas',
-        );
-        final code = Uri.parse(result).queryParameters['code'];
-        if (code == null || code.isEmpty) return false;
-        return await ApiService.linkSpotifyAccount(code);
       }
-    } catch (e) {
-      if (kDebugMode) {
-        print('Spotify Auth Exception: $e');
-      }
+
+      final result = await FlutterWebAuth2.authenticate(
+        url: authUrl,
+        callbackUrlScheme: 'feelingcanvas',
+      );
+      final code = Uri.parse(result).queryParameters['code'];
+      if (code == null || code.isEmpty) return false;
+      return await ApiService.linkSpotifyAccount(code);
+    } catch (_) {
       return false;
     }
   }

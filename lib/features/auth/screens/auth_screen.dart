@@ -36,7 +36,7 @@ class _AuthScreenState extends State<AuthScreen> {
     if (username.isEmpty || password.isEmpty || (!isLogin && email.isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Por favor, completa todos los campos requeridos.'),
+          content: Text('Please complete all required fields.'),
         ),
       );
       return;
@@ -45,7 +45,7 @@ class _AuthScreenState extends State<AuthScreen> {
     if (password.length < 8) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('La contraseña debe tener al menos 8 caracteres.'),
+          content: Text('Password must be at least 8 characters long.'),
         ),
       );
       return;
@@ -83,8 +83,8 @@ class _AuthScreenState extends State<AuthScreen> {
         SnackBar(
           content: Text(
             isLogin
-                ? 'Error al iniciar sesión. Revisa tus credenciales.'
-                : 'Error al registrar usuario. Comprueba el username y el email.',
+                ? 'Unable to sign in. Please check your credentials.'
+                : 'Unable to register the user. Check the username and email.',
           ),
         ),
       );
@@ -119,7 +119,7 @@ class _AuthScreenState extends State<AuthScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  isLogin ? 'Feeling Canvas - Iniciar Sesión' : 'Crear Cuenta',
+                  isLogin ? 'Feeling Canvas - Sign In' : 'Create Account',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -153,7 +153,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   obscureText: true,
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(
-                    labelText: 'Contraseña (mín. 8 caracteres)',
+                    labelText: 'Password (min. 8 characters)',
                     labelStyle: TextStyle(color: Colors.white70),
                     border: OutlineInputBorder(),
                   ),
@@ -176,7 +176,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                           const Expanded(
                             child: Text(
-                              'Usar mi posición GPS real al registrarme',
+                              'Use my real GPS location when registering',
                               style: TextStyle(
                                 color: Colors.white70,
                                 fontSize: 13,
@@ -208,7 +208,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : Text(
-                            isLogin ? 'Entrar' : 'Registrarse',
+                            isLogin ? 'Sign In' : 'Register',
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                             ),
@@ -220,8 +220,8 @@ class _AuthScreenState extends State<AuthScreen> {
                   onPressed: () => setState(() => isLogin = !isLogin),
                   child: Text(
                     isLogin
-                        ? '¿No tienes cuenta? Regístrate'
-                        : '¿Ya tienes cuenta? Inicia sesión',
+                        ? 'Need an account? Sign up'
+                        : 'Already have an account? Sign in',
                     style: const TextStyle(
                       color: CanvasConstants.remoteNodeColor,
                       fontSize: 12,

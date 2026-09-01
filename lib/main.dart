@@ -9,7 +9,6 @@ import 'features/canvas/screens/node_canvas_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Configure system status and navigation bar overlay styles
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -19,12 +18,11 @@ void main() async {
     ),
   );
 
-  // Safe session initialization
   bool hasSession = false;
   try {
     hasSession = await ApiService.initSession();
-  } catch (e) {
-    debugPrint('Error during session initialization: $e');
+  } catch (_) {
+    hasSession = false;
   }
 
   runApp(FeelingApp(initialHasSession: hasSession));
@@ -43,8 +41,6 @@ class FeelingApp extends StatelessWidget {
     return MaterialApp(
       title: 'Feeling Canvas',
       debugShowCheckedModeBanner: false,
-
-      // Centralized dark theme aligned with app constants
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: CanvasConstants.backgroundColor,
         appBarTheme: const AppBarTheme(
@@ -58,8 +54,6 @@ class FeelingApp extends StatelessWidget {
           surface: CanvasConstants.cardBackgroundColor,
         ),
       ),
-
-      // Initial route determined by active session status
       home: initialHasSession ? const NodeCanvasScreen() : const AuthScreen(),
     );
   }

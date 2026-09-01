@@ -45,14 +45,13 @@ class _NotificationCardState extends State<NotificationCard> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-              '¡Spotify vinculado con éxito! Sincronizando reproducción...'),
+          content: Text('Spotify linked successfully. Syncing playback...'),
         ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No se pudo conectar con Spotify.'),
+          content: Text('Unable to connect to Spotify.'),
         ),
       );
     }
@@ -66,25 +65,25 @@ class _NotificationCardState extends State<NotificationCard> {
       builder: (context) => AlertDialog(
         backgroundColor: CanvasConstants.cardBackgroundColor,
         title: const Text(
-          'Enviar solicitud',
+          'Send request',
           style: TextStyle(color: Colors.white),
         ),
         content: Text(
-          '¿Quieres enviar una solicitud de amistad a $targetUsername?',
+          'Do you want to send a friend request to $targetUsername?',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child:
-                const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                const Text('Cancel', style: TextStyle(color: Colors.white54)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: CanvasConstants.remoteNodeColor,
             ),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Enviar', style: TextStyle(color: Colors.white)),
+            child: const Text('Send', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -104,13 +103,13 @@ class _NotificationCardState extends State<NotificationCard> {
       setState(() => isSendingRequest = false);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Solicitud enviada a $targetUsername')),
+        SnackBar(content: Text('Friend request sent to $targetUsername')),
       );
     } else {
       setState(() => isSendingRequest = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No se pudo enviar la solicitud de amistad.'),
+          content: Text('Unable to send the friend request.'),
         ),
       );
     }
@@ -127,7 +126,6 @@ class _NotificationCardState extends State<NotificationCard> {
             ? CanvasConstants.friendNodeColor
             : CanvasConstants.remoteNodeColor);
 
-    // Solo se permite mostrar la información de Spotify si es el propio nodo o si son amigos
     final bool canSeeSpotify = isLocal || isFriend;
     final bool hasSong =
         canSeeSpotify && widget.activeNode.songTitle.isNotEmpty;
@@ -212,8 +210,8 @@ class _NotificationCardState extends State<NotificationCard> {
                               (canSeeSpotify
                                   ? Text(
                                       hasSong
-                                          ? 'Reproduciendo en Spotify'
-                                          : 'Sin reproducción activa',
+                                          ? 'Playing on Spotify'
+                                          : 'No active playback',
                                       style: TextStyle(
                                         color:
                                             Colors.white.withValues(alpha: 0.7),
@@ -280,7 +278,7 @@ class _NotificationCardState extends State<NotificationCard> {
                                 ),
                               const SizedBox(width: 6),
                               const Text(
-                                'Añadir amigo',
+                                'Add friend',
                                 style: TextStyle(
                                   color: CanvasConstants.remoteNodeColor,
                                   fontSize: 11,

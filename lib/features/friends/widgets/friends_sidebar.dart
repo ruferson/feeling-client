@@ -76,13 +76,13 @@ class _FriendsSidebarState extends State<FriendsSidebar>
     if (success) {
       _usernameController.clear();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Solicitud enviada a $username')),
+        SnackBar(content: Text('Request sent to $username')),
       );
       _loadAllData();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No se pudo enviar la solicitud. Verifica el usuario.'),
+          content: Text('Unable to send the request. Verify the username.'),
         ),
       );
     }
@@ -99,12 +99,12 @@ class _FriendsSidebarState extends State<FriendsSidebar>
       _loadAllData();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(accept ? 'Solicitud aceptada' : 'Solicitud rechazada'),
+          content: Text(accept ? 'Request accepted' : 'Request rejected'),
         ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Error al procesar la solicitud.')),
+        const SnackBar(content: Text('Unable to process the request.')),
       );
     }
   }
@@ -116,11 +116,11 @@ class _FriendsSidebarState extends State<FriendsSidebar>
     if (success) {
       _loadAllData();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Solicitud a ${request.username} cancelada')),
+        SnackBar(content: Text('Request to ${request.username} was cancelled')),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo cancelar la solicitud.')),
+        const SnackBar(content: Text('Unable to cancel the request.')),
       );
     }
   }
@@ -131,22 +131,21 @@ class _FriendsSidebarState extends State<FriendsSidebar>
       builder: (context) => AlertDialog(
         backgroundColor: CanvasConstants.cardBackgroundColor,
         title:
-            const Text('Eliminar amigo', style: TextStyle(color: Colors.white)),
+            const Text('Remove friend', style: TextStyle(color: Colors.white)),
         content: Text(
-          '¿Estás seguro de que quieres eliminar a ${friend.username} de tus amigos?',
+          'Are you sure you want to remove ${friend.username} from your friends?',
           style: const TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child:
-                const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                const Text('Cancel', style: TextStyle(color: Colors.white54)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(context, true),
-            child:
-                const Text('Eliminar', style: TextStyle(color: Colors.white)),
+            child: const Text('Remove', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -160,11 +159,11 @@ class _FriendsSidebarState extends State<FriendsSidebar>
     if (success) {
       _loadAllData();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Se ha eliminado a ${friend.username}')),
+        SnackBar(content: Text('${friend.username} was removed from friends')),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo eliminar al amigo.')),
+        const SnackBar(content: Text('Unable to remove the friend.')),
       );
     }
   }
@@ -198,7 +197,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text(
-                  'Comunidad',
+                  'Community',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20,
@@ -210,7 +209,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
                     IconButton(
                       icon: const Icon(Icons.refresh,
                           color: Colors.white54, size: 20),
-                      tooltip: 'Actualizar',
+                      tooltip: 'Refresh',
                       onPressed: _isLoading ? null : _loadAllData,
                     ),
                     IconButton(
@@ -231,7 +230,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
                     controller: _usernameController,
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: 'Añadir por username...',
+                      hintText: 'Add by username...',
                       hintStyle: const TextStyle(color: Colors.white38),
                       filled: true,
                       fillColor: CanvasConstants.backgroundColor
@@ -260,7 +259,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
                           ),
                         )
                       : const Icon(Icons.person_add, color: Colors.cyanAccent),
-                  tooltip: 'Enviar solicitud',
+                  tooltip: 'Send request',
                 ),
               ],
             ),
@@ -274,9 +273,9 @@ class _FriendsSidebarState extends State<FriendsSidebar>
             labelStyle:
                 const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             tabs: [
-              Tab(text: 'Amigos (${_friends.length})'),
-              Tab(text: 'Entrantes (${_pendingRequests.length})'),
-              Tab(text: 'Enviadas (${_sentRequests.length})'),
+              Tab(text: 'Friends (${_friends.length})'),
+              Tab(text: 'Incoming (${_pendingRequests.length})'),
+              Tab(text: 'Sent (${_sentRequests.length})'),
             ],
           ),
           Expanded(
@@ -299,7 +298,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
   Widget _buildFriendsList() {
     if (_friends.isEmpty) {
       return const Center(
-        child: Text('Aún no tienes amigos añadidos',
+        child: Text('No friends added yet',
             style: TextStyle(color: Colors.white38)),
       );
     }
@@ -333,7 +332,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
             trailing: IconButton(
               icon: const Icon(Icons.person_remove,
                   color: Colors.redAccent, size: 18),
-              tooltip: 'Eliminar amigo',
+              tooltip: 'Remove friend',
               onPressed: () => _removeFriend(friend),
             ),
           ),
@@ -345,7 +344,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
   Widget _buildRequestsList() {
     if (_pendingRequests.isEmpty) {
       return const Center(
-        child: Text('No hay solicitudes pendientes',
+        child: Text('No pending requests',
             style: TextStyle(color: Colors.white38)),
       );
     }
@@ -378,7 +377,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
                 IconButton(
                   icon: const Icon(Icons.close,
                       color: Colors.redAccent, size: 18),
-                  tooltip: 'Rechazar',
+                  tooltip: 'Reject',
                   onPressed: () => _resolveRequest(request, false),
                   constraints: const BoxConstraints(),
                   padding: const EdgeInsets.all(4),
@@ -386,7 +385,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
                 IconButton(
                   icon: const Icon(Icons.check,
                       color: Colors.greenAccent, size: 18),
-                  tooltip: 'Aceptar',
+                  tooltip: 'Accept',
                   onPressed: () => _resolveRequest(request, true),
                   constraints: const BoxConstraints(),
                   padding: const EdgeInsets.all(4),
@@ -402,7 +401,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
   Widget _buildSentRequestsList() {
     if (_sentRequests.isEmpty) {
       return const Center(
-        child: Text('No has enviado ninguna solicitud',
+        child: Text('No requests sent yet',
             style: TextStyle(color: Colors.white38)),
       );
     }
@@ -435,7 +434,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
                         overflow: TextOverflow.ellipsis,
                       ),
                       const Text(
-                        'Pendiente de respuesta',
+                        'Awaiting response',
                         style: TextStyle(color: Colors.white38, fontSize: 10),
                       ),
                     ],
@@ -444,7 +443,7 @@ class _FriendsSidebarState extends State<FriendsSidebar>
                 IconButton(
                   icon:
                       const Icon(Icons.close, color: Colors.white54, size: 18),
-                  tooltip: 'Cancelar solicitud',
+                  tooltip: 'Cancel request',
                   onPressed: () => _cancelSentRequest(request),
                   constraints: const BoxConstraints(),
                   padding: const EdgeInsets.all(4),
