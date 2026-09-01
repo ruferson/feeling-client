@@ -12,7 +12,7 @@ class NotificationCard extends StatefulWidget {
   final bool hasPendingRequest;
   final Animation<double>? pulseAnimation;
   final Future<void> Function()? onSpotifyConnected;
-  final Future<void> Function()? onRequestSent; // <--- Callback asíncrono
+  final Future<void> Function()? onRequestSent;
 
   const NotificationCard({
     super.key,
@@ -98,7 +98,6 @@ class _NotificationCardState extends State<NotificationCard> {
     if (!mounted) return;
 
     if (success) {
-      // Aguardamos a que la pantalla principal obtenga los nuevos datos de la API
       await widget.onRequestSent?.call();
       if (!mounted) return;
 
@@ -120,15 +119,21 @@ class _NotificationCardState extends State<NotificationCard> {
   @override
   Widget build(BuildContext context) {
     final bool isLocal = widget.activeNode.id == widget.localNodeId;
+    final bool isFriend = widget.isFriend;
+
     final Color accentColor = isLocal
         ? CanvasConstants.localNodeColor
-        : (widget.isFriend
+        : (isFriend
             ? CanvasConstants.friendNodeColor
             : CanvasConstants.remoteNodeColor);
 
-    final bool hasSong = widget.activeNode.songTitle.isNotEmpty;
+    // Solo se permite mostrar la información de Spotify si es el propio nodo o si son amigos
+    final bool canSeeSpotify = isLocal || isFriend;
+    final bool hasSong =
+        canSeeSpotify && widget.activeNode.songTitle.isNotEmpty;
+
     final bool showAddFriendOption =
-        !isLocal && !widget.isFriend && !widget.hasPendingRequest;
+        !isLocal && !isFriend && !widget.hasPendingRequest;
 
     final double dynamicCardHeight = showAddFriendOption ? 75.0 : 45.0;
 
@@ -183,7 +188,7 @@ class _NotificationCardState extends State<NotificationCard> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          Icons.music_note,
+                          hasSong ? Icons.music_note : Icons.person_outline,
                           color: accentColor,
                           size: 18,
                         ),
@@ -196,7 +201,7 @@ class _NotificationCardState extends State<NotificationCard> {
                               Text(
                                 hasSong
                                     ? '${widget.activeNode.songTitle} - ${widget.activeNode.artist}'
-                                    : 'Sin reproducción activa',
+                                    : widget.activeNode.label,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   color: Colors.white,
@@ -204,15 +209,18 @@ class _NotificationCardState extends State<NotificationCard> {
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              Text(
-                                hasSong
-                                    ? 'Reproduciendo en Spotify'
-                                    : widget.activeNode.label,
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.7),
-                                  fontSize: 9,
-                                ),
-                              ),
+                              (canSeeSpotify
+                                  ? Text(
+                                      hasSong
+                                          ? 'Reproduciendo en Spotify'
+                                          : 'Sin reproducción activa',
+                                      style: TextStyle(
+                                        color:
+                                            Colors.white.withValues(alpha: 0.7),
+                                        fontSize: 9,
+                                      ),
+                                    )
+                                  : const SizedBox.shrink())
                             ],
                           ),
                         ),
