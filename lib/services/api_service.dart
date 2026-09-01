@@ -3,11 +3,13 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/auth_model.dart';
+import '../models/friend_request_model.dart';
 import '../models/node_model.dart';
 
 class ApiService {
-  // Sin prefijo /api para coincidir con tu servidor NestJS
+  // Base API configuration (NestJS default port without /api prefix)
   static const String nestBaseUrl = 'http://localhost:3000';
   static String? _token;
   static String? _currentUserId;
@@ -15,52 +17,21 @@ class ApiService {
   static String? get currentUserId => _currentUserId;
   static String? get token => _token;
 
+  static Map<String, String> get _headers => {
+        'Content-Type': 'application/json',
+        if (_token != null) 'Authorization': 'Bearer $_token',
+      };
+
+  // ---------------------------------------------------------------------------
+  // Session & Auth Management
+  // ---------------------------------------------------------------------------
+
+  /// Restores session tokens from persistent storage.
   static Future<bool> initSession() async {
     final prefs = await SharedPreferences.getInstance();
     _token = prefs.getString('jwt_token');
     _currentUserId = prefs.getString('user_id');
     return _token != null && _token!.isNotEmpty;
-  }
-
-  /// Obtiene la URL de Spotify a través de NestJS.
-  static Future<String?> getSpotifyLoginUrl() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$nestBaseUrl/auth/spotify/login-url'),
-        headers: _headers,
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['authUrl'] as String?;
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /// Vincula Spotify en NestJS para asociarlo al usuario autenticado.
-  static Future<bool> linkSpotifyAccount(String spotifyCode) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$nestBaseUrl/auth/spotify'),
-        headers: _headers,
-        body: jsonEncode({
-          'code': spotifyCode,
-        }),
-      );
-      if (kDebugMode &&
-          response.statusCode != 200 &&
-          response.statusCode != 201) {
-        debugPrint(
-          'Spotify link error [${response.statusCode}]: ${response.body}',
-        );
-      }
-      return response.statusCode == 200 || response.statusCode == 201;
-    } catch (e) {
-      return false;
-    }
   }
 
   static Future<void> _saveSession(String token, String userId) async {
@@ -71,6 +42,7 @@ class ApiService {
     await prefs.setString('user_id', userId);
   }
 
+  /// Clears stored JWT token and active user ID.
   static Future<void> logout() async {
     _token = null;
     _currentUserId = null;
@@ -79,17 +51,13 @@ class ApiService {
     await prefs.remove('user_id');
   }
 
-  static Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        if (_token != null) 'Authorization': 'Bearer $_token',
-      };
-
-  static Future<AuthResponse?> login(String email, String password) async {
+  /// Authenticates a user using username and password credentials.
+  static Future<AuthResponse?> login(String username, String password) async {
     try {
       final response = await http.post(
         Uri.parse('$nestBaseUrl/auth/login'),
         headers: _headers,
-        body: jsonEncode({'email': email, 'password': password}),
+        body: jsonEncode({'username': username, 'password': password}),
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
@@ -111,7 +79,9 @@ class ApiService {
     return null;
   }
 
+  /// Registers a new user account with initial coordinates and credentials.
   static Future<AuthResponse?> register(
+    String username,
     String email,
     String password, {
     double? longitude,
@@ -119,18 +89,21 @@ class ApiService {
   }) async {
     try {
       final math.Random random = math.Random();
-      // Default to global geographic coordinates if none provided
+      // Default to random global geographic coordinates if none provided
       final double finalLng = longitude ??
           double.parse(
-              ((random.nextDouble() * 360.0) - 180.0).toStringAsFixed(6));
+            ((random.nextDouble() * 360.0) - 180.0).toStringAsFixed(6),
+          );
       final double finalLat = latitude ??
           double.parse(
-              ((random.nextDouble() * 180.0) - 90.0).toStringAsFixed(6));
+            ((random.nextDouble() * 180.0) - 90.0).toStringAsFixed(6),
+          );
 
       final response = await http.post(
         Uri.parse('$nestBaseUrl/auth/register'),
         headers: _headers,
         body: jsonEncode({
+          'username': username,
           'email': email,
           'password': password,
           'posX': finalLng,
@@ -157,6 +130,56 @@ class ApiService {
     return null;
   }
 
+  // ---------------------------------------------------------------------------
+  // Spotify Integration
+  // ---------------------------------------------------------------------------
+
+  /// Retrieves the Spotify OAuth login URL generated by the NestJS backend.
+  static Future<String?> getSpotifyLoginUrl() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$nestBaseUrl/auth/spotify/login-url'),
+        headers: _headers,
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['authUrl'] as String?;
+      }
+      return null;
+    } catch (e) {
+      if (kDebugMode) print('Spotify URL exception: $e');
+      return null;
+    }
+  }
+
+  /// Links a Spotify account to the currently authenticated user in NestJS.
+  static Future<bool> linkSpotifyAccount(String spotifyCode) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$nestBaseUrl/auth/spotify'),
+        headers: _headers,
+        body: jsonEncode({'code': spotifyCode}),
+      );
+      if (kDebugMode &&
+          response.statusCode != 200 &&
+          response.statusCode != 201) {
+        debugPrint(
+          'Spotify link error [${response.statusCode}]: ${response.body}',
+        );
+      }
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      if (kDebugMode) print('Spotify link exception: $e');
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Canvas Node Operations
+  // ---------------------------------------------------------------------------
+
+  /// Fetches all available map nodes from the NestJS backend.
   static Future<List<NodeModel>> getNodes() async {
     try {
       final response = await http.get(
@@ -180,7 +203,7 @@ class ApiService {
     return [];
   }
 
-  /// Updates local node using real geographical coordinates
+  /// Updates local node position in PostgreSQL using real geographic coordinates.
   static Future<bool> updateNodePosition({
     required double longitude,
     required double latitude,
@@ -189,13 +212,127 @@ class ApiService {
       final response = await http.patch(
         Uri.parse('$nestBaseUrl/nodes/location'),
         headers: _headers,
-        body: jsonEncode({
-          'posX': longitude,
-          'posY': latitude,
-        }),
+        body: jsonEncode({'posX': longitude, 'posY': latitude}),
       );
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) {
+      if (kDebugMode) print('UpdateNodePosition exception: $e');
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Friendship System Operations
+  // ---------------------------------------------------------------------------
+
+  /// Fetches the list of accepted friends for the active user.
+  static Future<List<FriendRequestModel>> getFriends() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$nestBaseUrl/friends'),
+        headers: _headers,
+      );
+      if (response.statusCode == 200) {
+        final List list = jsonDecode(response.body);
+        return list.map((item) => FriendRequestModel.fromJson(item)).toList();
+      }
+    } catch (e) {
+      if (kDebugMode) print('Get friends exception: $e');
+    }
+    return [];
+  }
+
+  /// Removes an existing friend or cancels a friendship record by ID.
+  static Future<bool> removeFriend(String friendshipId) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$nestBaseUrl/friends/$friendshipId'),
+        headers: _headers,
+      );
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      if (kDebugMode) print('Remove friend exception: $e');
+      return false;
+    }
+  }
+
+  /// Sends a new friend request using the target user's username.
+  static Future<bool> sendFriendRequest(String username) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$nestBaseUrl/friends/request'),
+        headers: _headers,
+        body: jsonEncode({'username': username}),
+      );
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      if (kDebugMode) print('Send friend request exception: $e');
+      return false;
+    }
+  }
+
+  /// Retrieves the list of pending incoming friend requests for the active user.
+  static Future<List<FriendRequestModel>> getPendingFriendRequests() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$nestBaseUrl/friends/pending'),
+        headers: _headers,
+      );
+      if (response.statusCode == 200) {
+        final List list = jsonDecode(response.body);
+        return list.map((item) => FriendRequestModel.fromJson(item)).toList();
+      }
+    } catch (e) {
+      if (kDebugMode) print('Pending friends exception: $e');
+    }
+    return [];
+  }
+
+  /// Accepts an incoming friend request by its friendship record ID.
+  static Future<bool> acceptFriendRequest(String friendshipId) async {
+    return _friendRequestAction('accept', friendshipId);
+  }
+
+  /// Rejects an incoming friend request by its friendship record ID.
+  static Future<bool> rejectFriendRequest(String friendshipId) async {
+    return _friendRequestAction('reject', friendshipId);
+  }
+
+  /// Retrieves the list of pending outgoing friend requests sent by the active user.
+  static Future<List<FriendRequestModel>> getSentFriendRequests() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$nestBaseUrl/friends/sent'),
+        headers: _headers,
+      );
+      if (response.statusCode == 200) {
+        final List list = jsonDecode(response.body);
+        return list.map((item) => FriendRequestModel.fromJson(item)).toList();
+      }
+    } catch (e) {
+      if (kDebugMode) print('Sent friends exception: $e');
+    }
+    return [];
+  }
+
+  /// Cancels a pending outgoing friend request.
+  static Future<bool> cancelSentRequest(String friendshipId) async {
+    return removeFriend(friendshipId);
+  }
+
+  /// Helper method to execute POST actions on friend requests.
+  static Future<bool> _friendRequestAction(
+    String action,
+    String friendshipId,
+  ) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$nestBaseUrl/friends/$action/$friendshipId'),
+        headers: _headers,
+      );
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      if (kDebugMode) print('Friend request action exception ($action): $e');
       return false;
     }
   }

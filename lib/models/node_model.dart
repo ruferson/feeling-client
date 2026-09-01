@@ -34,7 +34,7 @@ class NodeModel {
   factory NodeModel.fromJson(Map<String, dynamic> json) {
     return NodeModel(
       id: json['id']?.toString() ?? '',
-      label: json['label'] ?? json['user']?['email']?.split('@')[0] ?? 'User',
+      label: json['label'] ?? json['user']?['username'] ?? 'User',
       posX: (json['posX'] ?? 0.0).toDouble(),
       posY: (json['posY'] ?? 0.0).toDouble(),
       status: json['status'] ?? 'ACTIVE',

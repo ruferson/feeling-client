@@ -1,22 +1,29 @@
 import 'package:flutter/material.dart';
 import '../config/canvas_constants.dart';
 import '../models/node_model.dart';
+import '../services/api_service.dart';
 import '../services/spotify_service.dart';
 
 class NotificationCard extends StatefulWidget {
   final NodeModel activeNode;
   final bool isVisible;
   final String localNodeId;
+  final bool isFriend;
+  final bool hasPendingRequest;
   final Animation<double>? pulseAnimation;
   final Future<void> Function()? onSpotifyConnected;
+  final Future<void> Function()? onRequestSent; // <--- Callback asíncrono
 
   const NotificationCard({
     super.key,
     required this.activeNode,
     required this.isVisible,
     required this.localNodeId,
+    this.isFriend = false,
+    this.hasPendingRequest = false,
     this.pulseAnimation,
     this.onSpotifyConnected,
+    this.onRequestSent,
   });
 
   @override
@@ -25,6 +32,7 @@ class NotificationCard extends StatefulWidget {
 
 class _NotificationCardState extends State<NotificationCard> {
   bool isLinking = false;
+  bool isSendingRequest = false;
 
   void _handleConnectSpotify() async {
     setState(() => isLinking = true);
@@ -35,7 +43,6 @@ class _NotificationCardState extends State<NotificationCard> {
     if (success) {
       await widget.onSpotifyConnected?.call();
       if (!mounted) return;
-      // Force node update so UI reflects currently playing song
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -51,18 +58,84 @@ class _NotificationCardState extends State<NotificationCard> {
     }
   }
 
+  Future<void> _handleSendFriendRequest() async {
+    final String targetUsername = widget.activeNode.label;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: CanvasConstants.cardBackgroundColor,
+        title: const Text(
+          'Enviar solicitud',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          '¿Quieres enviar una solicitud de amistad a $targetUsername?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child:
+                const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: CanvasConstants.remoteNodeColor,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Enviar', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => isSendingRequest = true);
+    final success = await ApiService.sendFriendRequest(targetUsername);
+
+    if (!mounted) return;
+
+    if (success) {
+      // Aguardamos a que la pantalla principal obtenga los nuevos datos de la API
+      await widget.onRequestSent?.call();
+      if (!mounted) return;
+
+      setState(() => isSendingRequest = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Solicitud enviada a $targetUsername')),
+      );
+    } else {
+      setState(() => isSendingRequest = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo enviar la solicitud de amistad.'),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isLocal = widget.activeNode.id == widget.localNodeId;
     final Color accentColor = isLocal
         ? CanvasConstants.localNodeColor
-        : CanvasConstants.remoteNodeColor;
+        : (widget.isFriend
+            ? CanvasConstants.friendNodeColor
+            : CanvasConstants.remoteNodeColor);
+
     final bool hasSong = widget.activeNode.songTitle.isNotEmpty;
+    final bool showAddFriendOption =
+        !isLocal && !widget.isFriend && !widget.hasPendingRequest;
+
+    final double dynamicCardHeight = showAddFriendOption ? 75.0 : 45.0;
 
     return Positioned(
       left: widget.activeNode.posX - (CanvasConstants.cardWidth / 2),
       top: widget.activeNode.posY -
-          CanvasConstants.cardHeight -
+          dynamicCardHeight -
           CanvasConstants.cardVerticalOffset,
       child: IgnorePointer(
         ignoring: !widget.isVisible,
@@ -86,11 +159,11 @@ class _NotificationCardState extends State<NotificationCard> {
               child: Container(
                 width: CanvasConstants.cardWidth,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: CanvasConstants.cardBackgroundColor
                       .withValues(alpha: 0.95),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color: accentColor,
                     width: 1.5,
@@ -103,62 +176,111 @@ class _NotificationCardState extends State<NotificationCard> {
                     ),
                   ],
                 ),
-                child: Row(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.music_note,
-                      color: accentColor,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            hasSong
-                                ? '${widget.activeNode.songTitle} - ${widget.activeNode.artist}'
-                                : 'Sin reproducción activa',
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.music_note,
+                          color: accentColor,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                hasSong
+                                    ? '${widget.activeNode.songTitle} - ${widget.activeNode.artist}'
+                                    : 'Sin reproducción activa',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                hasSong
+                                    ? 'Reproduciendo en Spotify'
+                                    : widget.activeNode.label,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.7),
+                                  fontSize: 9,
+                                ),
+                              ),
+                            ],
                           ),
-                          Text(
-                            hasSong
-                                ? 'Reproduciendo en Spotify'
-                                : widget.activeNode.label,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.7),
-                              fontSize: 9,
+                        ),
+                        if (isLocal) ...[
+                          const SizedBox(width: 4),
+                          InkWell(
+                            onTap: isLinking ? null : _handleConnectSpotify,
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: const EdgeInsets.all(2.0),
+                              child: isLinking
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 1.5),
+                                    )
+                                  : Icon(
+                                      Icons.sync,
+                                      color: accentColor,
+                                      size: 16,
+                                    ),
                             ),
                           ),
                         ],
-                      ),
+                      ],
                     ),
-                    if (isLocal) ...[
-                      const SizedBox(width: 4),
+                    if (showAddFriendOption) ...[
+                      const SizedBox(height: 8),
+                      const Divider(color: Colors.white12, height: 1),
+                      const SizedBox(height: 6),
                       InkWell(
-                        onTap: isLinking ? null : _handleConnectSpotify,
-                        borderRadius: BorderRadius.circular(12),
+                        onTap:
+                            isSendingRequest ? null : _handleSendFriendRequest,
+                        borderRadius: BorderRadius.circular(6),
                         child: Padding(
-                          padding: const EdgeInsets.all(2.0),
-                          child: isLinking
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (isSendingRequest)
+                                const SizedBox(
+                                  width: 12,
+                                  height: 12,
                                   child: CircularProgressIndicator(
-                                      strokeWidth: 1.5),
+                                    strokeWidth: 1.5,
+                                    color: CanvasConstants.remoteNodeColor,
+                                  ),
                                 )
-                              : Icon(
-                                  Icons.sync,
-                                  color: accentColor,
-                                  size: 16,
+                              else
+                                const Icon(
+                                  Icons.person_add,
+                                  color: CanvasConstants.remoteNodeColor,
+                                  size: 14,
                                 ),
+                              const SizedBox(width: 6),
+                              const Text(
+                                'Añadir amigo',
+                                style: TextStyle(
+                                  color: CanvasConstants.remoteNodeColor,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],

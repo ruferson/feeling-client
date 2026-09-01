@@ -16,21 +16,24 @@ class _AuthScreenState extends State<AuthScreen> {
   bool isLoading = false;
   bool useGPS = true;
 
+  final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
   @override
   void dispose() {
+    _usernameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
   void _submit() async {
+    final username = _usernameController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
-    if (email.isEmpty || password.isEmpty) {
+    if (username.isEmpty || password.isEmpty || (!isLogin && email.isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Por favor, completa todos los campos requeridos.'),
@@ -59,14 +62,16 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     }
 
-    final result = isLogin
-        ? await ApiService.login(email, password)
-        : await ApiService.register(
-            email,
-            password,
-            longitude: initialLocation?['longitude'],
-            latitude: initialLocation?['latitude'],
-          );
+    final result =
+        isLogin
+            ? await ApiService.login(username, password)
+            : await ApiService.register(
+              username,
+              email,
+              password,
+              longitude: initialLocation?['longitude'],
+              latitude: initialLocation?['latitude'],
+            );
 
     setState(() => isLoading = false);
 
@@ -80,7 +85,7 @@ class _AuthScreenState extends State<AuthScreen> {
           content: Text(
             isLogin
                 ? 'Error al iniciar sesión. Revisa tus credenciales.'
-                : 'Error al registrar usuario. Comprueba si el email ya existe.',
+                : 'Error al registrar usuario. Comprueba el username y el email.',
           ),
         ),
       );
@@ -124,14 +129,25 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 24),
                 TextField(
-                  controller: _emailController,
+                  controller: _usernameController,
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(
-                    labelText: 'Email',
+                    labelText: 'Username',
                     labelStyle: TextStyle(color: Colors.white70),
                     border: OutlineInputBorder(),
                   ),
                 ),
+                if (!isLogin) const SizedBox(height: 16),
+                if (!isLogin)
+                  TextField(
+                    controller: _emailController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'Email',
+                      labelStyle: TextStyle(color: Colors.white70),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
                 const SizedBox(height: 16),
                 TextField(
                   controller: _passwordController,
@@ -186,16 +202,19 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                     ),
                     onPressed: isLoading ? null : _submit,
-                    child: isLoading
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Text(
-                            isLogin ? 'Entrar' : 'Registrarse',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
+                    child:
+                        isLoading
+                            ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                            : Text(
+                              isLogin ? 'Entrar' : 'Registrarse',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                   ),
                 ),
                 const SizedBox(height: 12),

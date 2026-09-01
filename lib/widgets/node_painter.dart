@@ -7,14 +7,16 @@ import '../models/node_model.dart';
 class NodePainter extends CustomPainter {
   final List<NodeModel> nodes;
   final String localNodeId;
+  final List<String> friendUserIds;
   final Map<String, double> pulseScales;
   final double fadeInOpacity;
 
   NodePainter({
     required this.nodes,
     required this.localNodeId,
-    required this.pulseScales,
-    required this.fadeInOpacity,
+    this.friendUserIds = const [],
+    this.pulseScales = const {},
+    this.fadeInOpacity = 1.0,
   });
 
   @override
@@ -66,9 +68,14 @@ class NodePainter extends CustomPainter {
   void _drawNodesAndLabels(Canvas canvas) {
     for (final node in nodes) {
       final bool isLocal = node.id == localNodeId;
-      final nodeColor = isLocal
+      final bool isFriend = friendUserIds.contains(node.id);
+
+      // Determine node color based on relationship state
+      final Color nodeColor = isLocal
           ? CanvasConstants.localNodeColor
-          : CanvasConstants.remoteNodeColor;
+          : (isFriend
+              ? CanvasConstants.friendNodeColor
+              : CanvasConstants.remoteNodeColor);
 
       final double scale = pulseScales[node.id] ?? 1.0;
       final bool isActive = node.status == 'ACTIVE';
@@ -76,8 +83,10 @@ class NodePainter extends CustomPainter {
       canvas.save();
       canvas.translate(node.posX, node.posY);
 
-      // Aplicar deformación y rotación si el nodo se está moviendo o estirando
-      final bool hasDeformation = node.scaleX != 1.0 || node.scaleY != 1.0 || node.rotationAngle != 0.0;
+      // Apply drag stretch deformation & angle if active
+      final bool hasDeformation =
+          node.scaleX != 1.0 || node.scaleY != 1.0 || node.rotationAngle != 0.0;
+
       if (hasDeformation) {
         canvas.rotate(node.rotationAngle);
         canvas.scale(node.scaleX, node.scaleY);
@@ -88,7 +97,7 @@ class NodePainter extends CustomPainter {
         final double pulseScaleX = 1.0 + scaleFactor * 0.35;
         final double pulseScaleY = 1.0 - scaleFactor * 0.12;
 
-        // Solo aplicar escala de pulso BPM si no se está aplicando la deformación por movimiento
+        // Apply BPM pulse scale only if no movement deformation is currently active
         if (!isLocal && !hasDeformation) {
           canvas.scale(pulseScaleX, pulseScaleY);
         }

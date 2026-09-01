@@ -19,6 +19,7 @@ class CanvasConstants {
   static const Color cardBackgroundColor = Color(0xFF1E293B);
   static const Color localNodeColor = Color(0xFF00E676);
   static const Color remoteNodeColor = Color(0xFF00B0FF);
+  static const Color friendNodeColor = Color(0xFF8B5CF6);
 
   // Sticky / Jelly Physics
   static const double stickyRange = 80.0;
