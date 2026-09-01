@@ -8,7 +8,7 @@ import '../../features/friends/models/friend_request_model.dart';
 import '../../features/canvas/models/node_model.dart';
 
 class ApiService {
-  static const String nestBaseUrl = 'http://localhost:3000';
+  static const String nestBaseUrl = 'http://localhost:3000/api';
   static String? _token;
   static String? _currentUserId;
 
