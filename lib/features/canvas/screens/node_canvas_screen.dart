@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:math' as math;
+import '../services/friends_socket_service.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/config/canvas_constants.dart';
 import '../controllers/canvas_animation_controller.dart';
 import '../../friends/models/friend_request_model.dart';
 import '../models/node_model.dart';
+import '../models/lobby_model.dart';
 import '../../../core/services/api_service.dart';
 import '../services/canvas_sync_service.dart';
 import '../../../core/utils/collision_service.dart';
@@ -16,6 +18,8 @@ import '../widgets/notification_card.dart';
 import '../widgets/world_map_painter.dart';
 import '../../auth/screens/auth_screen.dart';
 
+/// Primary Interactive Canvas Screen displaying real-time spatial nodes,
+/// handling user gesture dragging, collision physics, Spotify WebSocket sync, and friend sidebar integration.
 class NodeCanvasScreen extends StatefulWidget {
   const NodeCanvasScreen({super.key});
 
@@ -36,60 +40,203 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
   List<FriendRequestModel> _pendingSentRequests = [];
   List<FriendRequestModel> _pendingIncomingRequests = [];
 
+  LobbyModel? _currentLobby;
+
   String? selectedNodeId;
   NodeModel? _lastSelectedNode;
 
   bool isDraggingLocal = false;
   bool _hasMovedDuringCurrentDrag = false;
   bool _isFriendsSidebarOpen = false;
-
-  Timer? _pendingRequestsTimer;
+  bool _isSidebarDataLoading = true;
 
   @override
   void initState() {
     super.initState();
-    localNodeId = ApiService.currentUserId ?? '';
+
+    final currentUserId = ApiService.currentUserId;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _handleLogout();
+      });
+      return;
+    }
+
+    localNodeId = currentUserId;
 
     _animController = CanvasAnimationController(vsync: this);
     _syncService = CanvasSyncService();
 
     _initializeSyncServices();
+    _initializeFriendsSocket();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _fetchNodesFromBackend();
-      _refreshFriendshipsData();
+      _refreshFriendshipsData().then((_) {
+        _fetchLobbyAndNodes();
+      });
     });
-
-    _pendingRequestsTimer = Timer.periodic(
-      const Duration(seconds: 15),
-      (_) => _refreshFriendshipsData(),
-    );
   }
 
   @override
   void dispose() {
-    _pendingRequestsTimer?.cancel();
+    FriendsSocketService.disconnect();
     _syncService.dispose();
     _animController.dispose();
     super.dispose();
   }
 
+  /// Initializes Canvas Socket subscriptions for spatial displacement and live Spotify playback updates.
   void _initializeSyncServices() {
     _syncService.startSync(
       localNodeId: localNodeId,
       getCanvasSize: () => _canvasSize,
       isDraggingLocal: () => isDraggingLocal,
       onWebSocketNodeMoved: _handleRemoteNodeMoved,
-      onNodesFetched: _handleFetchedNodes,
-    );
-
-    _syncService.startPositionSyncTimer(
-      localNodeId: localNodeId,
-      getCanvasNodes: () => canvasNodes,
-      getCanvasSize: () => _canvasSize,
+      onNodeDataUpdated: _handleRemoteNodeUpdated,
     );
   }
 
+  /// Handles real-time node metadata changes (Spotify playback, song title, artist, BPM) received via WebSockets.
+  void _handleRemoteNodeUpdated(Map<String, dynamic> rawNodeData) {
+    if (!mounted) return;
+
+    final String updatedNodeId = rawNodeData['id']?.toString() ??
+        rawNodeData['userId']?.toString() ??
+        '';
+    if (updatedNodeId.isEmpty) return;
+
+    final friendUserIds = _friendsList.map((f) => f.userId).toList();
+
+    setState(() {
+      final index = canvasNodes.indexWhere((n) => n.id == updatedNodeId);
+      if (index != -1) {
+        final existing = canvasNodes[index];
+
+        final String newSong =
+            rawNodeData['songTitle']?.toString() ?? existing.songTitle;
+        final String newArtist =
+            rawNodeData['artist']?.toString() ?? existing.artist;
+        final bool isPlaying = rawNodeData['isPlaying'] is bool
+            ? rawNodeData['isPlaying'] as bool
+            : existing.isPlaying;
+        final int bpm = rawNodeData['bpm'] is num
+            ? (rawNodeData['bpm'] as num).toInt()
+            : existing.bpm;
+        final bool bpmEstimated = rawNodeData['bpmEstimated'] is bool
+            ? rawNodeData['bpmEstimated'] as bool
+            : existing.bpmEstimated;
+
+        final bool hasTrack = newSong.trim().isNotEmpty;
+
+        final updatedNode = existing.copyWith(
+          songTitle: newSong,
+          artist: newArtist,
+          isPlaying: isPlaying,
+          bpm: bpm,
+          bpmEstimated: bpmEstimated,
+          status: hasTrack
+              ? 'ACTIVE'
+              : (rawNodeData['status']?.toString() ?? existing.status),
+        );
+
+        final previousNodes = List<NodeModel>.from(canvasNodes);
+        canvasNodes[index] = updatedNode;
+
+        // Re-evaluate and adapt BPM pulse loop for real-time Spotify playback
+        _animController.updateBpmAnimationsForRefresh(
+          previousNodes,
+          canvasNodes,
+          localNodeId: localNodeId,
+          friendUserIds: friendUserIds,
+        );
+      }
+    });
+  }
+
+  /// Initializes real-time WebSocket listeners for community and friendship events.
+  /// Updates internal memory state directly without issuing redundant HTTP requests.
+  void _initializeFriendsSocket() {
+    FriendsSocketService.connect(
+      onFriendRequestReceived: (data) {
+        if (!mounted) return;
+        final newRequest = FriendRequestModel.fromJson(data);
+        setState(() {
+          if (!_pendingIncomingRequests.any(
+            (r) => r.friendshipId == newRequest.friendshipId,
+          )) {
+            _pendingIncomingRequests.add(newRequest);
+          }
+        });
+        _showNotification(
+          'New friend request from ${newRequest.username}',
+          isError: false,
+        );
+      },
+      onFriendshipAccepted: (data) {
+        if (!mounted) return;
+        final acceptedFriend = FriendRequestModel.fromJson(data);
+        setState(() {
+          // Remove from pending incoming/sent lists if present
+          _pendingIncomingRequests.removeWhere(
+            (r) =>
+                r.friendshipId == acceptedFriend.friendshipId ||
+                r.userId == acceptedFriend.userId,
+          );
+          _pendingSentRequests.removeWhere(
+            (r) =>
+                r.friendshipId == acceptedFriend.friendshipId ||
+                r.userId == acceptedFriend.userId,
+          );
+
+          // Add directly to active friends list
+          if (!_friendsList.any((f) => f.userId == acceptedFriend.userId)) {
+            _friendsList.add(acceptedFriend);
+          }
+        });
+
+        _showNotification(
+          '${acceptedFriend.username} accepted your request!',
+          isError: false,
+        );
+      },
+      onFriendshipRemoved: (data) {
+        if (!mounted) return;
+        final String friendshipId = data['friendshipId']?.toString() ?? '';
+        final String removedByUserId =
+            data['removedByUserId']?.toString() ?? '';
+
+        setState(() {
+          _friendsList.removeWhere(
+            (f) =>
+                f.friendshipId == friendshipId || f.userId == removedByUserId,
+          );
+          _pendingIncomingRequests.removeWhere(
+            (r) => r.friendshipId == friendshipId,
+          );
+          _pendingSentRequests.removeWhere(
+            (r) => r.friendshipId == friendshipId,
+          );
+        });
+
+        _fetchLobbyAndNodes();
+      },
+    );
+  }
+
+  /// Displays a floating snackbar notification with customizable visual urgency.
+  void _showNotification(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor:
+            isError ? Colors.redAccent : CanvasConstants.localNodeColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// Handles incoming remote node displacement events triggered via WebSockets.
   void _handleRemoteNodeMoved(String userId, Offset targetPixelPos) {
     final index = canvasNodes.indexWhere((n) => n.id == userId);
     if (index == -1) return;
@@ -130,42 +277,114 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     );
   }
 
+  /// Refreshes friend list, sent requests, and incoming friend requests.
   Future<void> _refreshFriendshipsData() async {
-    final results = await Future.wait([
-      ApiService.getFriends(),
-      ApiService.getPendingFriendRequests(),
-      ApiService.getSentFriendRequests(),
-    ]);
+    if (mounted) setState(() => _isSidebarDataLoading = true);
+    try {
+      final results = await Future.wait([
+        ApiService.getFriends(),
+        ApiService.getPendingFriendRequests(),
+        ApiService.getSentFriendRequests(),
+      ]);
 
+      if (!mounted) return;
+
+      final friendsData = results[0];
+      final pendingIncomingData = results[1];
+      final pendingSentData = results[2];
+
+      setState(() {
+        if (friendsData != null) _friendsList = friendsData;
+        if (pendingIncomingData != null) {
+          _pendingIncomingRequests = pendingIncomingData;
+        }
+        if (pendingSentData != null) _pendingSentRequests = pendingSentData;
+        _isSidebarDataLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _isSidebarDataLoading = false);
+    }
+  }
+
+  /// Sends an outbound friend request triggered from the sidebar input.
+  Future<void> _handleSidebarSendRequest(String username) async {
+    final result = await ApiService.sendFriendRequest(username);
     if (!mounted) return;
+
+    if (result.isSuccess && result.data != null) {
+      setState(() {
+        if (!_pendingSentRequests.any(
+          (r) => r.friendshipId == result.data!.friendshipId,
+        )) {
+          _pendingSentRequests.add(result.data!);
+        }
+      });
+      _showNotification('Request sent to $username', isError: false);
+    } else {
+      _showNotification(
+        result.errorMessage ??
+            'Unable to send request. Please verify username.',
+        isError: true,
+      );
+    }
+  }
+
+  /// Fetches the user's spatial lobby details and updates canvas nodes.
+  Future<void> _fetchLobbyAndNodes() async {
+    final lobby = await ApiService.getMyLobby();
+    if (!mounted) return;
+
+    final nodesToProcess = lobby?.nodes ?? await ApiService.getNodes();
+
     setState(() {
-      _friendsList = results[0];
-      _pendingIncomingRequests = results[1];
-      _pendingSentRequests = results[2];
+      if (lobby != null) {
+        _currentLobby = lobby;
+      }
     });
+
+    if (nodesToProcess != null) {
+      _handleFetchedNodes(nodesToProcess);
+    }
   }
 
-  Future<void> _fetchNodesFromBackend() async {
-    final rawNodes = await ApiService.getNodes();
-    _handleFetchedNodes(rawNodes);
+  /// Transitions local node into a target friend's spatial lobby room.
+  Future<void> _joinFriendLobby(String friendUserId) async {
+    final newLobby = await ApiService.joinFriendLobby(friendUserId);
+    if (!mounted) return;
+
+    if (newLobby != null) {
+      setState(() {
+        _currentLobby = newLobby;
+      });
+      _handleFetchedNodes(newLobby.nodes);
+      _showNotification('Joined ${newLobby.name}', isError: false);
+    } else {
+      _showNotification(
+        'Unable to join lobby. Room may be full (20/20).',
+        isError: true,
+      );
+    }
   }
 
+  /// Processes raw node responses from API/WebSockets and performs spatial coordinate mapping.
   void _handleFetchedNodes(List<NodeModel> rawNodes) {
     final canvasSize = _canvasSize;
+    final friendUserIds = _friendsList.map((f) => f.userId).toList();
 
     if (canvasNodes.isNotEmpty) {
       final nodesById = {for (final node in rawNodes) node.id: node};
       final previousNodes = List<NodeModel>.from(canvasNodes);
-      late final List<NodeModel> updatedNodes;
 
       if (!mounted) return;
       setState(() {
-        updatedNodes = canvasNodes.map((node) {
+        canvasNodes = canvasNodes.map((node) {
           final refreshedNode = nodesById[node.id];
           if (refreshedNode == null) return node;
 
+          final bool hasTrack = refreshedNode.songTitle.isNotEmpty;
+
           return node.copyWith(
-            status: refreshedNode.status,
+            status: hasTrack ? 'ACTIVE' : refreshedNode.status,
             bpm: refreshedNode.bpm,
             bpmEstimated: refreshedNode.bpmEstimated,
             isPlaying: refreshedNode.isPlaying,
@@ -174,18 +393,21 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
             label: refreshedNode.label,
           );
         }).toList();
-        canvasNodes = updatedNodes;
 
-        if (_lastSelectedNode != null) {
-          final freshSelected = nodesById[_lastSelectedNode!.id];
-          if (freshSelected != null) {
-            _lastSelectedNode = _lastSelectedNode!.copyWith(
-              status: freshSelected.status,
-              bpm: freshSelected.bpm,
-              bpmEstimated: freshSelected.bpmEstimated,
-              isPlaying: freshSelected.isPlaying,
-              songTitle: freshSelected.songTitle,
-              artist: freshSelected.artist,
+        for (final rawNode in rawNodes) {
+          if (!canvasNodes.any((n) => n.id == rawNode.id)) {
+            final pixelPos = CoordinateService.geoToPixel(
+              longitude: rawNode.posX,
+              latitude: rawNode.posY,
+              screenSize: canvasSize,
+            );
+            final bool hasTrack = rawNode.songTitle.isNotEmpty;
+            canvasNodes.add(
+              rawNode.copyWith(
+                posX: pixelPos.dx,
+                posY: pixelPos.dy,
+                status: hasTrack ? 'ACTIVE' : rawNode.status,
+              ),
             );
           }
         }
@@ -193,7 +415,9 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
 
       _animController.updateBpmAnimationsForRefresh(
         previousNodes,
-        updatedNodes,
+        canvasNodes,
+        localNodeId: localNodeId,
+        friendUserIds: friendUserIds,
       );
       return;
     }
@@ -204,7 +428,12 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
         latitude: node.posY,
         screenSize: canvasSize,
       );
-      return node.copyWith(posX: pixelPos.dx, posY: pixelPos.dy);
+      final bool hasTrack = node.songTitle.isNotEmpty;
+      return node.copyWith(
+        posX: pixelPos.dx,
+        posY: pixelPos.dy,
+        status: hasTrack ? 'ACTIVE' : node.status,
+      );
     }).toList();
 
     final visuallySeparatedNodes = CollisionService.resolveVisualOverlaps(
@@ -219,8 +448,16 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     });
 
     if (canvasNodes.isNotEmpty) {
-      _animController.setupBpmAnimations(canvasNodes);
-      _animController.fadeInController.forward(from: 0.0);
+      _animController.fadeInController.forward(from: 0.0).then((_) {
+        if (!mounted) return;
+        setState(() {
+          _animController.setupBpmAnimations(
+            canvasNodes,
+            localNodeId: localNodeId,
+            friendUserIds: friendUserIds,
+          );
+        });
+      });
     }
   }
 
@@ -236,14 +473,16 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     return renderBox?.globalToLocal(globalPosition);
   }
 
+  /// Wipes session tokens and returns safely to the Authentication screen.
   void _handleLogout() async {
+    FriendsSocketService.disconnect();
     _syncService.dispose();
     await ApiService.logout();
 
     if (mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const AuthScreen()),
-      );
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const AuthScreen()));
     }
   }
 
@@ -251,9 +490,45 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     setState(() {
       _isFriendsSidebarOpen = !_isFriendsSidebarOpen;
     });
-    _refreshFriendshipsData();
   }
 
+  void _handleFriendshipChanged(
+    FriendRequestModel request,
+    FriendshipAction action,
+  ) {
+    if (!mounted) return;
+
+    setState(() {
+      switch (action) {
+        case FriendshipAction.accepted:
+          _pendingIncomingRequests.removeWhere(
+            (item) => item.friendshipId == request.friendshipId,
+          );
+          _pendingSentRequests.removeWhere(
+            (item) => item.friendshipId == request.friendshipId,
+          );
+          if (!_friendsList.any((item) => item.userId == request.userId)) {
+            _friendsList.add(request);
+          }
+        case FriendshipAction.rejected:
+          _pendingIncomingRequests.removeWhere(
+            (item) => item.friendshipId == request.friendshipId,
+          );
+        case FriendshipAction.cancelled:
+          _pendingSentRequests.removeWhere(
+            (item) => item.friendshipId == request.friendshipId,
+          );
+        case FriendshipAction.removed:
+          _friendsList.removeWhere(
+            (item) => item.friendshipId == request.friendshipId,
+          );
+      }
+    });
+
+    _fetchLobbyAndNodes();
+  }
+
+  /// Updates local node position with collision physics and squash/stretch velocity.
   void _updateLocalPosition(Offset globalPosition, {Offset? delta}) {
     final localPosition = _globalToLocalOffset(globalPosition);
     if (localPosition == null) return;
@@ -327,7 +602,11 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
 
   void _onPanEnd(DragEndDetails details) {
     if (isDraggingLocal && _hasMovedDuringCurrentDrag) {
-      _syncService.markPendingSync();
+      _syncService.syncLocalPosition(
+        localNodeId: localNodeId,
+        getCanvasNodes: () => canvasNodes,
+        getCanvasSize: () => _canvasSize,
+      );
     }
 
     final index = canvasNodes.indexWhere((n) => n.id == localNodeId);
@@ -401,17 +680,28 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
         : null;
 
     final friendUserIds = _friendsList.map((f) => f.userId).toList();
+    final friendUsernames = _friendsList.map((f) => f.username).toList();
 
-    final bool isSelectedFriend =
-        activeNode != null && friendUserIds.contains(activeNode.id);
+    final bool isSelectedFriend = activeNode != null &&
+        (friendUserIds.contains(activeNode.id) ||
+            friendUsernames.contains(activeNode.label));
 
     final bool isSelectedPending = activeNode != null &&
-        (_pendingSentRequests.any((r) => r.userId == activeNode?.id) ||
-            _pendingIncomingRequests.any((r) => r.userId == activeNode?.id));
+        (_pendingSentRequests.any(
+              (r) =>
+                  r.userId == activeNode?.id ||
+                  r.username.toLowerCase() == activeNode?.label.toLowerCase(),
+            ) ||
+            _pendingIncomingRequests.any(
+              (r) =>
+                  r.userId == activeNode?.id ||
+                  r.username.toLowerCase() == activeNode?.label.toLowerCase(),
+            ));
 
     final List<Listenable> listenables = [
       _animController.fadeInAnimation,
       ..._animController.squashAnimations.values,
+      ..._animController.bpmControllers.values,
       ..._animController.moveAnimations.values,
       ..._animController.moveStretchAnimations.values,
     ];
@@ -419,7 +709,25 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
     return Scaffold(
       backgroundColor: CanvasConstants.backgroundColor,
       appBar: AppBar(
-        title: const Text('Feeling Canvas'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Feeling Canvas',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            if (_currentLobby != null)
+              Text(
+                '${_currentLobby!.name} (${_currentLobby!.occupantsCount}/${_currentLobby!.maxCapacity})',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: CanvasConstants.remoteNodeColor,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+          ],
+        ),
         backgroundColor: CanvasConstants.appBarColor,
         elevation: 0,
         actions: [
@@ -485,6 +793,7 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
                     nodes: canvasNodes,
                     localNodeId: localNodeId,
                     friendUserIds: friendUserIds,
+                    friendUsernames: friendUsernames,
                     pulseScales: pulseScales,
                     fadeInOpacity: _animController.fadeInAnimation.value,
                   ),
@@ -502,8 +811,15 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
               isFriend: isSelectedFriend,
               hasPendingRequest: isSelectedPending,
               pulseAnimation: selectedAnimation,
-              onSpotifyConnected: _fetchNodesFromBackend,
-              onRequestSent: _refreshFriendshipsData,
+              onRequestSentWithModel: (newRequest) {
+                setState(() {
+                  if (!_pendingSentRequests.any(
+                    (r) => r.friendshipId == newRequest.friendshipId,
+                  )) {
+                    _pendingSentRequests.add(newRequest);
+                  }
+                });
+              },
             ),
 
           // Layer 4: Floating Friends Sidebar
@@ -514,11 +830,15 @@ class _NodeCanvasScreenState extends State<NodeCanvasScreen>
             bottom: 0,
             right: _isFriendsSidebarOpen ? 0 : -320,
             child: FriendsSidebar(
-              key: ValueKey(
-                '${_friendsList.length}_${_pendingSentRequests.length}_${_pendingIncomingRequests.length}',
-              ),
               onClose: _toggleFriendsSidebar,
-              onRequestHandled: _refreshFriendshipsData,
+              onRequestHandled: _handleFriendshipChanged,
+              onJoinLobby: _joinFriendLobby,
+              friends: _friendsList,
+              pendingRequests: _pendingIncomingRequests,
+              sentRequests: _pendingSentRequests,
+              isLoading: _isSidebarDataLoading,
+              onRefreshData: _refreshFriendshipsData,
+              onSendRequestSubmitted: _handleSidebarSendRequest,
             ),
           ),
         ],

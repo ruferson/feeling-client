@@ -4,10 +4,13 @@ import 'package:flutter/material.dart';
 import '../../../core/config/canvas_constants.dart';
 import '../models/node_model.dart';
 
+/// Custom Painter responsible for rendering spatial canvas grid lines, real-time node connections,
+/// proximity electrical lightning sparks, status glows, dynamic BPM pulse transformations, and user labels.
 class NodePainter extends CustomPainter {
   final List<NodeModel> nodes;
   final String localNodeId;
   final List<String> friendUserIds;
+  final List<String> friendUsernames;
   final Map<String, double> pulseScales;
   final double fadeInOpacity;
 
@@ -15,6 +18,7 @@ class NodePainter extends CustomPainter {
     required this.nodes,
     required this.localNodeId,
     this.friendUserIds = const [],
+    this.friendUsernames = const [],
     this.pulseScales = const {},
     this.fadeInOpacity = 1.0,
   });
@@ -28,6 +32,7 @@ class NodePainter extends CustomPainter {
     _drawNodesAndLabels(canvas);
   }
 
+  /// Renders background viewport grid alignment guidelines scaled by overall screen fade-in opacity.
   void _drawBackgroundGrid(Canvas canvas, Size size) {
     final gridPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.05 * fadeInOpacity)
@@ -41,11 +46,15 @@ class NodePainter extends CustomPainter {
     }
   }
 
+  /// Evaluates distance constraints between the authenticated local node and surrounding remote nodes.
+  /// Triggers proximity electrical spark animations when nodes enter close contact thresholds.
   void _drawNodeConnections(Canvas canvas) {
     NodeModel? localNode;
     try {
       localNode = nodes.firstWhere((n) => n.id == localNodeId);
-    } catch (_) {}
+    } catch (_) {
+      // Local node omitted from canvas or unassigned
+    }
 
     if (localNode == null) return;
 
@@ -65,12 +74,17 @@ class NodePainter extends CustomPainter {
     }
   }
 
+  /// Renders primary node visual elements (core, glow aura, squashing transforms, and text labels).
+  /// Utilizes relationship color coding (Local, Friend, Remote) and status attributes.
   void _drawNodesAndLabels(Canvas canvas) {
     for (final node in nodes) {
       final bool isLocal = node.id == localNodeId;
-      final bool isFriend = friendUserIds.contains(node.id);
 
-      // Determine node color based on relationship state
+      // Robust dual validation check (either matching ID or matching label/username)
+      final bool isFriend = friendUserIds.contains(node.id) ||
+          friendUsernames.contains(node.label);
+
+      // Determine node color representation based on relationship state
       final Color nodeColor = isLocal
           ? CanvasConstants.localNodeColor
           : (isFriend
@@ -83,7 +97,11 @@ class NodePainter extends CustomPainter {
       canvas.save();
       canvas.translate(node.posX, node.posY);
 
-      // Apply drag stretch deformation & angle if active
+      // Apply initial flickering scale and opacity during entrance phase
+      final double entranceScale = math.max(0.2, fadeInOpacity);
+      canvas.scale(entranceScale, entranceScale);
+
+      // Evaluate active user drag deformation (stretch factor & rotation angle)
       final bool hasDeformation =
           node.scaleX != 1.0 || node.scaleY != 1.0 || node.rotationAngle != 0.0;
 
@@ -97,15 +115,15 @@ class NodePainter extends CustomPainter {
         final double pulseScaleX = 1.0 + scaleFactor * 0.35;
         final double pulseScaleY = 1.0 - scaleFactor * 0.12;
 
-        // Apply BPM pulse scale only if no movement deformation is currently active
         if (!isLocal && !hasDeformation) {
           canvas.scale(pulseScaleX, pulseScaleY);
         }
 
+        final double glowAlpha = (isLocal ? 0.40 : 0.28) * fadeInOpacity;
+
         final glowPaint = Paint()
-          ..color = nodeColor.withValues(
-              alpha: (isLocal ? 0.35 : 0.25) * fadeInOpacity)
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 10 * scale);
+          ..color = nodeColor.withValues(alpha: glowAlpha)
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 12 * scale);
 
         canvas.drawCircle(Offset.zero, 18.0 * scale, glowPaint);
 
@@ -130,7 +148,7 @@ class NodePainter extends CustomPainter {
 
       canvas.restore();
 
-      // Render Text Label
+      // Render Node Text Label
       final textSpan = TextSpan(
         text: node.label,
         style: TextStyle(
@@ -152,15 +170,18 @@ class NodePainter extends CustomPainter {
     }
   }
 
+  /// Renders an electric jagged lightning bolt at node contact points using cryptographically
+  /// secure pseudo-random generators to avoid predictable displacement patterns.
   void _drawFlickeringLightning(
     Canvas canvas,
     Offset contactPoint,
     Offset localPos,
     Offset remotePos,
   ) {
-    final math.Random random = math.Random();
+    // Use cryptographically secure random generator to prevent deterministic pattern predictability
+    final math.Random secureRandom = math.Random.secure();
     final double flickerOpacity =
-        (0.65 + (random.nextDouble() * 0.35)) * fadeInOpacity;
+        (0.65 + (secureRandom.nextDouble() * 0.35)) * fadeInOpacity;
 
     final glowPaint = Paint()
       ..color = Colors.cyanAccent.withValues(alpha: 0.40 * flickerOpacity)
@@ -197,7 +218,7 @@ class NodePainter extends CustomPainter {
         start.dy + (end.dy - start.dy) * progress,
       );
 
-      final double displacement = (random.nextDouble() * 7.0) - 3.5;
+      final double displacement = (secureRandom.nextDouble() * 7.0) - 3.5;
       final Offset jaggedPoint = Offset(
         basePoint.dx + math.cos(angle) * displacement,
         basePoint.dy + math.sin(angle) * displacement,
@@ -218,6 +239,14 @@ class NodePainter extends CustomPainter {
     canvas.drawCircle(contactPoint, 3.0, flashCore);
   }
 
+  /// Repaint evaluator triggering canvas redrawn cycles on animation frame updates.
   @override
-  bool shouldRepaint(covariant NodePainter oldDelegate) => true;
+  bool shouldRepaint(covariant NodePainter oldDelegate) {
+    return oldDelegate.fadeInOpacity != fadeInOpacity ||
+        oldDelegate.nodes != nodes ||
+        oldDelegate.pulseScales != pulseScales ||
+        oldDelegate.friendUserIds != friendUserIds ||
+        oldDelegate.friendUsernames != friendUsernames ||
+        oldDelegate.localNodeId != localNodeId;
+  }
 }

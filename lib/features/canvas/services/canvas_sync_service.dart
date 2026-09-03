@@ -1,86 +1,86 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/node_model.dart';
-import '../../../core/services/api_service.dart';
 import '../../../core/utils/coordinate_service.dart';
 import 'node_socket_service.dart';
 
+/// Synchronization service bridging local client spatial state with NestJS WebSockets
+/// and managing outbound position updates.
 class CanvasSyncService {
-  Timer? _syncTimer;
-  Timer? _canvasRefreshTimer;
-
-  bool _isPendingSync = false;
-
-  void markPendingSync() {
-    _isPendingSync = true;
-  }
-
+  /// Initializes real-time WebSocket listeners for spatial position and Spotify playback events.
   void startSync({
     required String localNodeId,
     required Size Function() getCanvasSize,
     required bool Function() isDraggingLocal,
     required Function(String userId, Offset targetPixelPos)
         onWebSocketNodeMoved,
-    required Function(List<NodeModel> rawNodes) onNodesFetched,
+    required Function(Map<String, dynamic> updatedNodeData) onNodeDataUpdated,
   }) {
     NodeSocketService.connect(
       onNodeUpdated: (data) {
-        final String updatedUserId = data['userId'];
-        final Map<String, dynamic> updatedNodeData = data['node'];
+        try {
+          final String updatedUserId = data['userId']?.toString() ?? '';
+          final Map<String, dynamic>? updatedNodeData =
+              data['node'] as Map<String, dynamic>?;
 
-        if (updatedUserId == localNodeId && isDraggingLocal()) return;
+          if (updatedNodeData == null || updatedUserId.isEmpty) return;
 
-        final double rawX = (updatedNodeData['posX'] as num).toDouble();
-        final double rawY = (updatedNodeData['posY'] as num).toDouble();
+          // Dispatch the full node data payload, including Spotify track info, playback state, and BPM.
+          onNodeDataUpdated(updatedNodeData);
 
-        final pixelPos = CoordinateService.geoToPixel(
-          longitude: rawX,
-          latitude: rawY,
-          screenSize: getCanvasSize(),
-        );
+          // Ignore inbound movement events for the local node during an active drag gesture.
+          if (updatedUserId == localNodeId && isDraggingLocal()) return;
 
-        onWebSocketNodeMoved(updatedUserId, Offset(pixelPos.dx, pixelPos.dy));
+          if (updatedNodeData.containsKey('posX') &&
+              updatedNodeData.containsKey('posY')) {
+            final double rawX = (updatedNodeData['posX'] as num).toDouble();
+            final double rawY = (updatedNodeData['posY'] as num).toDouble();
+
+            final pixelPos = CoordinateService.geoToPixel(
+              longitude: rawX,
+              latitude: rawY,
+              screenSize: getCanvasSize(),
+            );
+
+            onWebSocketNodeMoved(
+              updatedUserId,
+              Offset(pixelPos.dx, pixelPos.dy),
+            );
+          }
+        } catch (_) {
+          // Ignore malformed WebSocket event payloads.
+        }
       },
     );
-
-    _canvasRefreshTimer =
-        Timer.periodic(const Duration(seconds: 10), (_) async {
-      final rawNodes = await ApiService.getNodes();
-      onNodesFetched(rawNodes);
-    });
   }
 
-  void startPositionSyncTimer({
+  /// Sends the local node position through the node WebSocket.
+  void syncLocalPosition({
     required String localNodeId,
     required List<NodeModel> Function() getCanvasNodes,
     required Size Function() getCanvasSize,
   }) {
-    _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (!_isPendingSync || localNodeId.isEmpty) return;
+    if (localNodeId.isEmpty) return;
 
-      final nodes = getCanvasNodes();
-      final localNodeIndex = nodes.indexWhere((n) => n.id == localNodeId);
-      if (localNodeIndex == -1) return;
+    final nodes = getCanvasNodes();
+    final localNodeIndex = nodes.indexWhere((node) => node.id == localNodeId);
+    if (localNodeIndex == -1) return;
 
-      final localNode = nodes[localNodeIndex];
-      final geo = CoordinateService.pixelToGeo(
-        pixelPos: Offset(localNode.posX, localNode.posY),
-        screenSize: getCanvasSize(),
-      );
+    final localNode = nodes[localNodeIndex];
+    final geo = CoordinateService.pixelToGeo(
+      pixelPos: Offset(localNode.posX, localNode.posY),
+      screenSize: getCanvasSize(),
+    );
 
-      ApiService.updateNodePosition(
-        longitude: geo['longitude']!,
-        latitude: geo['latitude']!,
-      );
+    final double? longitude = geo['longitude'];
+    final double? latitude = geo['latitude'];
+    if (longitude == null || latitude == null) return;
 
-      _isPendingSync = false;
-    });
+    NodeSocketService.updateLocation(longitude: longitude, latitude: latitude);
   }
 
+  /// Disconnects active Socket.IO client connections.
   void dispose() {
-    _syncTimer?.cancel();
-    _canvasRefreshTimer?.cancel();
     NodeSocketService.disconnect();
   }
 }

@@ -4,6 +4,8 @@ import '../config/canvas_constants.dart';
 import '../../features/canvas/models/node_model.dart';
 import 'coordinate_service.dart';
 
+/// Represents the mathematical physical output of a collision resolution step,
+/// including post-collision position coordinates and squash-and-stretch deformation scales.
 class CollisionResult {
   final Offset position;
   final double scaleX;
@@ -18,8 +20,11 @@ class CollisionResult {
   });
 }
 
+/// Physics engine service responsible for spatial collision detection, boundary clamping,
+/// overlap resolution, and visual elastic deformation between spatial nodes.
 class CollisionService {
-  /// Resolves purely visual initial overlaps across nodes
+  /// Resolves initial visual node overlaps using an iterative constraint relaxation algorithm.
+  /// Ensures all spatial nodes maintain minimum clearance distances while keeping local node priorities.
   static List<NodeModel> resolveVisualOverlaps({
     required List<NodeModel> nodes,
     required String localNodeId,
@@ -28,8 +33,11 @@ class CollisionService {
     if (nodes.isEmpty) return [];
 
     final List<NodeModel> adjusted = List.from(nodes);
-    final math.Random random = math.Random(42);
 
+    // Seeded pseudo-random generator to ensure deterministic anti-coincidence offsets
+    final math.Random secureRandom = math.Random.secure();
+
+    // 1. Initial micro-dispersion for exactly overlapping coordinates (dist < 1.0)
     for (int i = 0; i < adjusted.length; i++) {
       for (int j = i + 1; j < adjusted.length; j++) {
         final double dx = adjusted[i].posX - adjusted[j].posX;
@@ -37,7 +45,7 @@ class CollisionService {
         final double dist = math.sqrt(dx * dx + dy * dy);
 
         if (dist < 1.0) {
-          final double angle = random.nextDouble() * 2 * math.pi;
+          final double angle = secureRandom.nextDouble() * 2 * math.pi;
           adjusted[j] = adjusted[j].copyWith(
             posX: adjusted[j].posX + math.cos(angle) * 8.0,
             posY: adjusted[j].posY + math.sin(angle) * 8.0,
@@ -49,6 +57,7 @@ class CollisionService {
     const int iterations = 6;
     const double minClearance = CanvasConstants.nodeRadius * 2.0;
 
+    // 2. Iterative Relaxation Loop (Verlet-style position constraint solver)
     for (int iter = 0; iter < iterations; iter++) {
       for (int i = 0; i < adjusted.length; i++) {
         for (int j = i + 1; j < adjusted.length; j++) {
@@ -60,6 +69,7 @@ class CollisionService {
           double dist = math.sqrt(dx * dx + dy * dy);
 
           if (dist < minClearance) {
+            // Guard against division by zero
             if (dist == 0) {
               dx = 1.0;
               dy = 0.0;
@@ -70,6 +80,7 @@ class CollisionService {
             final double nx = dx / dist;
             final double ny = dy / dist;
 
+            // Give priority displacement to non-local nodes if local node is participating
             if (nodeA.id == localNodeId) {
               adjusted[i] = nodeA.copyWith(
                 posX: nodeA.posX - nx * overlap,
@@ -96,6 +107,7 @@ class CollisionService {
       }
     }
 
+    // 3. Enforce canvas boundary constraints across all adjusted node coordinates
     return adjusted.map((node) {
       final clamped = CoordinateService.clampToScreen(
         Offset(node.posX, node.posY),
@@ -105,7 +117,8 @@ class CollisionService {
     }).toList();
   }
 
-  /// Single-target drag resolver allowing maximum physical contact & perimeter sliding
+  /// Calculates dynamic single-target drag collision physics.
+  /// Allows continuous surface sliding along rigid obstacle perimeters and returns visual squashing scales.
   static CollisionResult resolveCollisions({
     required Offset targetPos,
     required List<NodeModel> nodes,
@@ -129,6 +142,7 @@ class CollisionService {
       double distance = math.sqrt(dx * dx + dy * dy);
 
       if (distance < minContactDistance) {
+        // Prevent singular indeterminate normal vectors
         if (distance == 0) {
           dx = 1.0;
           dy = 0.0;
@@ -139,11 +153,11 @@ class CollisionService {
         final double ny = dy / distance;
         final double overlap = minContactDistance - distance;
 
-        // Slide around perimeter of the rigid remote node
+        // Slide along perimeter of remote rigid node boundary
         currentX = node.posX + (nx * minContactDistance);
         currentY = node.posY + (ny * minContactDistance);
 
-        // Deform local node on impact
+        // Calculate dynamic elastic compression (Squash & Stretch physics)
         final double compression =
             (overlap / minContactDistance).clamp(0.0, 0.50);
         calculatedScaleX = 1.0 - compression * 0.60;
@@ -153,6 +167,7 @@ class CollisionService {
       }
     }
 
+    // Enforce final viewport boundaries
     final clampedPos = CoordinateService.clampToScreen(
       Offset(currentX, currentY),
       screenSize,

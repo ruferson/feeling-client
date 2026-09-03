@@ -2,22 +2,25 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../models/node_model.dart';
 
+/// Manages high-performance canvas animations for spatial nodes, including
+/// smooth position interpolation, velocity-driven squash and stretch physics,
+/// real-time BPM pulse synchronization, and screen entrance fade-ins.
 class CanvasAnimationController {
   final TickerProvider vsync;
 
-  // Node movement position animations
+  // Node movement position controllers and interpolation curves
   final Map<String, AnimationController> moveControllers = {};
   final Map<String, Animation<Offset>> moveAnimations = {};
 
-  // Node movement deformation (stretch & squash) animations
+  // Velocity-driven elastic deformation properties
   final Map<String, Animation<double>> moveStretchAnimations = {};
   final Map<String, double> moveRotationAngles = {};
 
-  // Music beat pulse animations
+  // Music beat rhythm (BPM) pulsation animations
   final Map<String, AnimationController> bpmControllers = {};
   final Map<String, Animation<double>> squashAnimations = {};
 
-  // Entrance fade-in animation
+  // Screen/Canvas entrance fade-in sequence
   late AnimationController fadeInController;
   late Animation<double> fadeInAnimation;
 
@@ -25,6 +28,7 @@ class CanvasAnimationController {
     _initFadeInAnimation();
   }
 
+  /// Initializes multi-phase flicker/fade-in entrance animation sequence.
   void _initFadeInAnimation() {
     fadeInController = AnimationController(
       vsync: vsync,
@@ -33,21 +37,33 @@ class CanvasAnimationController {
 
     fadeInAnimation = TweenSequence<double>([
       TweenSequenceItem(
-          tween: Tween<double>(begin: 0.0, end: 0.15), weight: 15),
+        tween: Tween<double>(begin: 0.0, end: 0.15),
+        weight: 15,
+      ),
       TweenSequenceItem(
-          tween: Tween<double>(begin: 0.15, end: 0.05), weight: 10),
+        tween: Tween<double>(begin: 0.15, end: 0.05),
+        weight: 10,
+      ),
       TweenSequenceItem(
-          tween: Tween<double>(begin: 0.05, end: 0.45), weight: 20),
+        tween: Tween<double>(begin: 0.05, end: 0.45),
+        weight: 20,
+      ),
       TweenSequenceItem(
-          tween: Tween<double>(begin: 0.45, end: 0.25), weight: 15),
+        tween: Tween<double>(begin: 0.45, end: 0.25),
+        weight: 15,
+      ),
       TweenSequenceItem(
-          tween: Tween<double>(begin: 0.25, end: 1.0), weight: 40),
-    ]).animate(CurvedAnimation(
-      parent: fadeInController,
-      curve: Curves.easeOut,
-    ));
+        tween: Tween<double>(begin: 0.25, end: 1.0),
+        weight: 40,
+      ),
+    ]).animate(
+      CurvedAnimation(parent: fadeInController, curve: Curves.easeOut),
+    );
+
+    fadeInController.value = 1.0;
   }
 
+  /// Animates spatial node displacement from [startOffset] to [targetOffset].
   void animateNodeMovement({
     required String userId,
     required Offset startOffset,
@@ -67,41 +83,42 @@ class CanvasAnimationController {
 
     const microSnapCurve = Cubic(0.2, 0.9, 0.2, 1.03);
 
-    // 1. Position displacement animation
     final posAnimation = Tween<Offset>(
       begin: startOffset,
       end: targetOffset,
-    ).animate(CurvedAnimation(
-      parent: controller,
-      curve: isLongDistance ? microSnapCurve : Curves.easeOutCubic,
-    ));
+    ).animate(
+      CurvedAnimation(
+        parent: controller,
+        curve: isLongDistance ? microSnapCurve : Curves.easeOutCubic,
+      ),
+    );
 
-    // 2. Velocity-based stretch & squash animation along direction vector
     late final Animation<double> stretchAnimation;
     if (isLongDistance) {
       final double deltaX = targetOffset.dx - startOffset.dx;
       final double deltaY = targetOffset.dy - startOffset.dy;
       moveRotationAngles[userId] = math.atan2(deltaY, deltaX);
 
-      // Max stretch factor scaled proportionally with distance (capped at 1.35x)
       final double maxStretch = math.min(2.2, 1.0 + (distance / 400.0));
 
       stretchAnimation = TweenSequence<double>([
         TweenSequenceItem(
-          tween: Tween<double>(begin: 1.0, end: maxStretch).chain(
-            CurveTween(curve: Curves.easeOutQuad),
-          ),
+          tween: Tween<double>(
+            begin: 1.0,
+            end: maxStretch,
+          ).chain(CurveTween(curve: Curves.easeOutQuad)),
           weight: 40,
         ),
         TweenSequenceItem(
-          tween: Tween<double>(begin: maxStretch, end: 1.0).chain(
-            CurveTween(curve: Curves.easeInOutCubic),
-          ),
+          tween: Tween<double>(
+            begin: maxStretch,
+            end: 1.0,
+          ).chain(CurveTween(curve: Curves.easeInOutCubic)),
           weight: 60,
         ),
       ]).animate(controller);
     } else {
-      stretchAnimation = AlwaysStoppedAnimation<double>(1.0);
+      stretchAnimation = const AlwaysStoppedAnimation<double>(1.0);
       moveRotationAngles.remove(userId);
     }
 
@@ -114,28 +131,50 @@ class CanvasAnimationController {
     controller.forward();
   }
 
-  void setupBpmAnimations(List<NodeModel> nodes) {
+  /// Initializes BPM pulse loops with strict friendship privacy boundaries.
+  void setupBpmAnimations(
+    List<NodeModel> nodes, {
+    required String localNodeId,
+    required List<String> friendUserIds,
+  }) {
     clearBpmAnimations();
     for (final node in nodes) {
-      if (_shouldAnimate(node)) _createBpmAnimation(node);
+      if (_shouldAnimate(
+        node,
+        localNodeId: localNodeId,
+        friendUserIds: friendUserIds,
+      )) {
+        _createBpmAnimation(node);
+      }
     }
   }
 
+  /// Differential update handler for BPM animations.
   void updateBpmAnimationsForRefresh(
     List<NodeModel> previousNodes,
-    List<NodeModel> updatedNodes,
-  ) {
-    final previousById = {
-      for (final node in previousNodes) node.id: node,
-    };
+    List<NodeModel> updatedNodes, {
+    required String localNodeId,
+    required List<String> friendUserIds,
+  }) {
+    final previousById = {for (final node in previousNodes) node.id: node};
 
     for (final node in updatedNodes) {
       final previousNode = previousById[node.id];
-      final animationShouldExist = _shouldAnimate(node);
+      final animationShouldExist = _shouldAnimate(
+        node,
+        localNodeId: localNodeId,
+        friendUserIds: friendUserIds,
+      );
       final animationExists = bpmControllers.containsKey(node.id);
-      final bpmChanged = previousNode == null ||
+      final bpmChanged =
+          previousNode == null ||
           _animationBpm(previousNode) != _animationBpm(node) ||
-          _shouldAnimate(previousNode) != animationShouldExist;
+          _shouldAnimate(
+                previousNode,
+                localNodeId: localNodeId,
+                friendUserIds: friendUserIds,
+              ) !=
+              animationShouldExist;
 
       if (!animationShouldExist) {
         _disposeBpmAnimation(node.id);
@@ -151,14 +190,31 @@ class CanvasAnimationController {
     }
   }
 
-  bool _shouldAnimate(NodeModel node) {
-    return node.status == 'ACTIVE' && node.isPlaying;
+  /// Evaluates whether a node qualifies for continuous BPM rhythm animation.
+  /// Strictly prevents music animation for strangers.
+  bool _shouldAnimate(
+    NodeModel node, {
+    required String localNodeId,
+    required List<String> friendUserIds,
+  }) {
+    final bool isOwner = node.id == localNodeId;
+    final bool isFriend = friendUserIds.contains(node.id);
+
+    // Only the local user and confirmed friends can animate to music.
+    if (!isOwner && !isFriend) {
+      return false;
+    }
+
+    final bool hasTrackInfo = node.songTitle.trim().isNotEmpty;
+    return hasTrackInfo && node.isPlaying;
   }
 
+  /// Resolves node BPM, falling back to 120 BPM standard if unassigned.
   int _animationBpm(NodeModel node) {
-    return node.bpm > 0 ? node.bpm : 100;
+    return node.bpm > 0 ? node.bpm : 120;
   }
 
+  /// Spawns a repeating ticker animation matching the node's audio tempo (BPM).
   void _createBpmAnimation(NodeModel node) {
     final beatDurationMs = (60.0 / _animationBpm(node)) * 1000;
     final controller = AnimationController(
@@ -168,16 +224,18 @@ class CanvasAnimationController {
 
     final animation = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween<double>(begin: 1.0, end: 1.30).chain(
-          CurveTween(curve: const Cubic(0.05, 0.9, 0.1, 1.0)),
-        ),
-        weight: 20,
+        tween: Tween<double>(
+          begin: 1.0,
+          end: 1.25,
+        ).chain(CurveTween(curve: const Cubic(0.05, 0.9, 0.1, 1.0))),
+        weight: 25,
       ),
       TweenSequenceItem(
-        tween: Tween<double>(begin: 1.30, end: 1.0).chain(
-          CurveTween(curve: Curves.easeOutCubic),
-        ),
-        weight: 80,
+        tween: Tween<double>(
+          begin: 1.25,
+          end: 1.0,
+        ).chain(CurveTween(curve: Curves.easeOutCubic)),
+        weight: 75,
       ),
     ]).animate(controller);
 
@@ -185,11 +243,13 @@ class CanvasAnimationController {
     squashAnimations[node.id] = animation;
   }
 
+  /// Disposes a single BPM animation controller safely.
   void _disposeBpmAnimation(String nodeId) {
     bpmControllers.remove(nodeId)?.dispose();
     squashAnimations.remove(nodeId);
   }
 
+  /// Disposes position and deformation controllers for a specific node ID.
   void _disposeMoveAnimation(String nodeId) {
     moveControllers.remove(nodeId)?.dispose();
     moveAnimations.remove(nodeId);
@@ -197,6 +257,7 @@ class CanvasAnimationController {
     moveRotationAngles.remove(nodeId);
   }
 
+  /// Safely disposes all active BPM controllers and clears animation maps.
   void clearBpmAnimations() {
     for (final controller in bpmControllers.values) {
       controller.dispose();
@@ -205,6 +266,7 @@ class CanvasAnimationController {
     squashAnimations.clear();
   }
 
+  /// Master disposal method to clean up all active tickers and prevent memory leaks.
   void dispose() {
     for (final controller in moveControllers.values) {
       controller.dispose();

@@ -1,3 +1,8 @@
+import 'package:flutter/foundation.dart';
+
+/// Data transfer object representing a spatial node in the canvas.
+/// Encapsulates spatial coordinates, audio playback metadata, and client-side elastic deformation states.
+@immutable
 class NodeModel {
   final String id;
   final String label;
@@ -15,7 +20,7 @@ class NodeModel {
   final double scaleY;
   final double rotationAngle;
 
-  NodeModel({
+  const NodeModel({
     required this.id,
     required this.label,
     required this.posX,
@@ -31,9 +36,15 @@ class NodeModel {
     this.rotationAngle = 0.0,
   });
 
+  /// Factory constructor for instantiating a [NodeModel] from raw JSON payloads.
+  /// Maps `userId` (or nested `user.id`) as the primary node identifier to guarantee
+  /// alignment with `ApiService.currentUserId` across local drag gestures and color mapping.
   factory NodeModel.fromJson(Map<String, dynamic> json) {
+    final String extractedUserId =
+        (json['userId'] ?? json['user']?['id'] ?? json['id'])?.toString() ?? '';
+
     return NodeModel(
-      id: json['id']?.toString() ?? '',
+      id: extractedUserId,
       label: json['label'] ?? json['user']?['username'] ?? 'User',
       posX: (json['posX'] ?? 0.0).toDouble(),
       posY: (json['posY'] ?? 0.0).toDouble(),
@@ -46,6 +57,28 @@ class NodeModel {
     );
   }
 
+  /// Converts the [NodeModel] instance into a JSON-compatible map structure.
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'userId': id,
+      'label': label,
+      'posX': posX,
+      'posY': posY,
+      'status': status,
+      'bpm': bpm,
+      'bpmEstimated': bpmEstimated,
+      'isPlaying': isPlaying,
+      'songTitle': songTitle,
+      'artist': artist,
+      'user': {
+        'id': id,
+        'username': label,
+      },
+    };
+  }
+
+  /// Creates a copy of this [NodeModel] with optional updated fields.
   NodeModel copyWith({
     String? id,
     String? label,
@@ -77,4 +110,39 @@ class NodeModel {
       rotationAngle: rotationAngle ?? this.rotationAngle,
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NodeModel &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          label == other.label &&
+          posX == other.posX &&
+          posY == other.posY &&
+          status == other.status &&
+          bpm == other.bpm &&
+          bpmEstimated == other.bpmEstimated &&
+          isPlaying == other.isPlaying &&
+          songTitle == other.songTitle &&
+          artist == other.artist &&
+          scaleX == other.scaleX &&
+          scaleY == other.scaleY &&
+          rotationAngle == other.rotationAngle;
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      label.hashCode ^
+      posX.hashCode ^
+      posY.hashCode ^
+      status.hashCode ^
+      bpm.hashCode ^
+      bpmEstimated.hashCode ^
+      isPlaying.hashCode ^
+      songTitle.hashCode ^
+      artist.hashCode ^
+      scaleX.hashCode ^
+      scaleY.hashCode ^
+      rotationAngle.hashCode;
 }

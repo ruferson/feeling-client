@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+
 import '../../../core/config/canvas_constants.dart';
 import '../models/node_model.dart';
+import '../../friends/models/friend_request_model.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/spotify_service.dart';
 
+/// Floating notification card rendered directly above selected canvas nodes.
+/// Displays active Spotify playback metadata based on relationship privacy levels (Friends vs Strangers),
+/// allows local account Spotify re-synchronization, and provides inline friend request actions.
 class NotificationCard extends StatefulWidget {
   final NodeModel activeNode;
   final bool isVisible;
@@ -11,8 +16,7 @@ class NotificationCard extends StatefulWidget {
   final bool isFriend;
   final bool hasPendingRequest;
   final Animation<double>? pulseAnimation;
-  final Future<void> Function()? onSpotifyConnected;
-  final Future<void> Function()? onRequestSent;
+  final ValueChanged<FriendRequestModel>? onRequestSentWithModel;
 
   const NotificationCard({
     super.key,
@@ -22,8 +26,7 @@ class NotificationCard extends StatefulWidget {
     this.isFriend = false,
     this.hasPendingRequest = false,
     this.pulseAnimation,
-    this.onSpotifyConnected,
-    this.onRequestSent,
+    this.onRequestSentWithModel,
   });
 
   @override
@@ -31,87 +34,114 @@ class NotificationCard extends StatefulWidget {
 }
 
 class _NotificationCardState extends State<NotificationCard> {
-  bool isLinking = false;
-  bool isSendingRequest = false;
+  bool _isLinking = false;
+  bool _isSendingRequest = false;
 
-  void _handleConnectSpotify() async {
-    setState(() => isLinking = true);
-    final success = await SpotifyService.connectSpotify();
-    if (!mounted) return;
-    setState(() => isLinking = false);
+  /// Triggers OAuth Spotify account connection flow and invokes callback on success.
+  Future<void> _handleConnectSpotify() async {
+    setState(() => _isLinking = true);
 
-    if (success) {
-      await widget.onSpotifyConnected?.call();
+    try {
+      final success = await SpotifyService.connectSpotify();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Spotify linked successfully. Syncing playback...'),
-        ),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Unable to connect to Spotify.'),
-        ),
-      );
+
+      if (success.isSuccess) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Spotify linked successfully. Syncing playback...'),
+            backgroundColor: CanvasConstants.localNodeColor,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to connect to Spotify.'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLinking = false);
+      }
     }
   }
 
+  /// Displays confirmation dialog and dispatches an outbound friend request to target username.
   Future<void> _handleSendFriendRequest() async {
     final String targetUsername = widget.activeNode.label;
 
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: CanvasConstants.cardBackgroundColor,
-        title: const Text(
-          'Send request',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: Text(
-          'Do you want to send a friend request to $targetUsername?',
-          style: const TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child:
-                const Text('Cancel', style: TextStyle(color: Colors.white54)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: CanvasConstants.remoteNodeColor,
+      builder:
+          (context) => AlertDialog(
+            backgroundColor: CanvasConstants.cardBackgroundColor,
+            title: const Text(
+              'Send Friend Request',
+              style: TextStyle(color: Colors.white),
             ),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Send', style: TextStyle(color: Colors.white)),
+            content: Text(
+              'Do you want to send a friend request to $targetUsername?',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: CanvasConstants.remoteNodeColor,
+                ),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text(
+                  'Send',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
     );
 
     if (confirm != true) return;
 
-    setState(() => isSendingRequest = true);
-    final success = await ApiService.sendFriendRequest(targetUsername);
+    setState(() => _isSendingRequest = true);
 
-    if (!mounted) return;
-
-    if (success) {
-      await widget.onRequestSent?.call();
+    try {
+      final result = await ApiService.sendFriendRequest(targetUsername);
       if (!mounted) return;
 
-      setState(() => isSendingRequest = false);
+      if (result.isSuccess && result.data != null) {
+        widget.onRequestSentWithModel?.call(result.data!);
+        if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Friend request sent to $targetUsername')),
-      );
-    } else {
-      setState(() => isSendingRequest = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Unable to send the friend request.'),
-        ),
-      );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Friend request sent to $targetUsername'),
+            backgroundColor: CanvasConstants.localNodeColor,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result.errorMessage ?? 'Unable to send the friend request.',
+            ),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSendingRequest = false);
+      }
     }
   }
 
@@ -119,25 +149,31 @@ class _NotificationCardState extends State<NotificationCard> {
   Widget build(BuildContext context) {
     final bool isLocal = widget.activeNode.id == widget.localNodeId;
     final bool isFriend = widget.isFriend;
+    final bool hasPending = widget.hasPendingRequest;
 
-    final Color accentColor = isLocal
-        ? CanvasConstants.localNodeColor
-        : (isFriend
-            ? CanvasConstants.friendNodeColor
-            : CanvasConstants.remoteNodeColor);
+    // Evaluate node card outline accent color based on relationship hierarchy
+    final Color accentColor =
+        isLocal
+            ? CanvasConstants.localNodeColor
+            : (isFriend
+                ? CanvasConstants.friendNodeColor
+                : CanvasConstants.remoteNodeColor);
 
+    // Enforce privacy masking: Only local user or accepted friends can view live Spotify playback
     final bool canSeeSpotify = isLocal || isFriend;
     final bool hasSong =
         canSeeSpotify && widget.activeNode.songTitle.isNotEmpty;
 
-    final bool showAddFriendOption =
-        !isLocal && !isFriend && !widget.hasPendingRequest;
+    // Only display the add friend option if the node is neither local nor a friend and has no pending request
+    final bool showAddFriendOption = !isLocal && !isFriend && !hasPending;
 
-    final double dynamicCardHeight = showAddFriendOption ? 75.0 : 45.0;
+    final double dynamicCardHeight =
+        showAddFriendOption || hasPending ? 75.0 : 45.0;
 
     return Positioned(
       left: widget.activeNode.posX - (CanvasConstants.cardWidth / 2),
-      top: widget.activeNode.posY -
+      top:
+          widget.activeNode.posY -
           dynamicCardHeight -
           CanvasConstants.cardVerticalOffset,
       child: IgnorePointer(
@@ -152,25 +188,22 @@ class _NotificationCardState extends State<NotificationCard> {
             builder: (context, child) {
               final double pulseVal = widget.pulseAnimation?.value ?? 1.0;
               final double scale = 0.96 + (pulseVal - 1.0) * 0.12;
-              return Transform.scale(
-                scale: scale,
-                child: child,
-              );
+              return Transform.scale(scale: scale, child: child);
             },
             child: Material(
               color: Colors.transparent,
               child: Container(
                 width: CanvasConstants.cardWidth,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
-                  color: CanvasConstants.cardBackgroundColor
-                      .withValues(alpha: 0.95),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: accentColor,
-                    width: 1.5,
+                  color: CanvasConstants.cardBackgroundColor.withValues(
+                    alpha: 0.95,
                   ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: accentColor, width: 1.5),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: 0.4),
@@ -207,40 +240,44 @@ class _NotificationCardState extends State<NotificationCard> {
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              (canSeeSpotify
-                                  ? Text(
-                                      hasSong
-                                          ? 'Playing on Spotify'
-                                          : 'No active playback',
-                                      style: TextStyle(
-                                        color:
-                                            Colors.white.withValues(alpha: 0.7),
-                                        fontSize: 9,
-                                      ),
-                                    )
-                                  : const SizedBox.shrink())
+                              if (canSeeSpotify)
+                                Text(
+                                  hasSong
+                                      ? 'Playing on Spotify'
+                                      : 'No active playback',
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.7),
+                                    fontSize: 9,
+                                  ),
+                                ),
                             ],
                           ),
                         ),
                         if (isLocal) ...[
                           const SizedBox(width: 4),
                           InkWell(
-                            onTap: isLinking ? null : _handleConnectSpotify,
+                            onTap: _isLinking ? null : _handleConnectSpotify,
                             borderRadius: BorderRadius.circular(12),
                             child: Padding(
                               padding: const EdgeInsets.all(2.0),
-                              child: isLinking
-                                  ? const SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 1.5),
-                                    )
-                                  : Icon(
-                                      Icons.sync,
-                                      color: accentColor,
-                                      size: 16,
-                                    ),
+                              child:
+                                  _isLinking
+                                      ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 1.5,
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                CanvasConstants.localNodeColor,
+                                              ),
+                                        ),
+                                      )
+                                      : Icon(
+                                        Icons.sync,
+                                        color: accentColor,
+                                        size: 16,
+                                      ),
                             ),
                           ),
                         ],
@@ -252,16 +289,18 @@ class _NotificationCardState extends State<NotificationCard> {
                       const SizedBox(height: 6),
                       InkWell(
                         onTap:
-                            isSendingRequest ? null : _handleSendFriendRequest,
+                            _isSendingRequest ? null : _handleSendFriendRequest,
                         borderRadius: BorderRadius.circular(6),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 2),
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (isSendingRequest)
+                              if (_isSendingRequest)
                                 const SizedBox(
                                   width: 12,
                                   height: 12,
@@ -288,6 +327,29 @@ class _NotificationCardState extends State<NotificationCard> {
                             ],
                           ),
                         ),
+                      ),
+                    ] else if (hasPending) ...[
+                      const SizedBox(height: 8),
+                      const Divider(color: Colors.white12, height: 1),
+                      const SizedBox(height: 6),
+                      const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.hourglass_top,
+                            color: Colors.amberAccent,
+                            size: 13,
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            'Request pending',
+                            style: TextStyle(
+                              color: Colors.amberAccent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ],
